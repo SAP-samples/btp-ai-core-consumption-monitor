@@ -83,6 +83,13 @@ service FinOpsService @(path: '/service/FinOpsService') {
         message         : String;
     };
 
+
+    // Send a test email to verify email configuration (SMTP or API)
+    // @requires: 'Admin'
+    action sendTestEmail(recipientEmail: String) returns {
+        success         : Boolean;
+        message         : String;
+    };
     // Load historical data from UAS API for a date range
     // Fetches all AI Core measures (capacity_units + tokens) and stores daily records
     // @requires: 'Admin'

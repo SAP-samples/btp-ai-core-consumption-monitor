@@ -8,14 +8,14 @@
 
 const cds = require('@sap/cds')
 const { runMonitoringJob, runMonitoringForSubaccount } = require('./lib/monitoring')
-const { sendSmtpNotification } = require('./lib/smtp-notifier')
+const { sendSmtpNotification, sendTestEmail, invalidateTransporterCache } = require('./lib/smtp-notifier')
 const { sendAnsNotification } = require('./lib/ans-notifier')
 
 const { encrypt } = require('./lib/crypto')
 const { info, warn, error } = cds.log('service')
 
 // Fields that should be encrypted before storage
-const SENSITIVE_FIELDS = ['smtpPassword']
+const SENSITIVE_FIELDS = ['smtpPassword', 'apiKey']
 
 module.exports = class FinOpsService extends cds.ApplicationService {
     async init() {
@@ -113,6 +113,14 @@ module.exports = class FinOpsService extends cds.ApplicationService {
                 ansResult,
                 message: `Test notification sent. SMTP: ${smtpResult ? 'success' : 'failed/disabled'}, ANS: ${ansResult ? 'success' : 'failed/disabled'}`
             }
+        })
+
+                // ── sendTestEmail action ─────────────────────────────────────────────
+        this.on('sendTestEmail', async (req) => {
+            info('sendTestEmail called: ' + req.data.recipientEmail)
+            const db = cds.db || await cds.connect.to('db')
+            const notifConfig = await db.run(SELECT.one.from('aicorefin.NotificationConfigs'))
+            return await sendTestEmail(req.data.recipientEmail, notifConfig)
         })
 
         // ── loadHistoricalData action ─────────────────────────────────────────
