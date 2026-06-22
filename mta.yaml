@@ -1,0 +1,212 @@
+_schema-version: "3.1"
+ID: btp-ai-core-finops
+version: 1.0.0
+description: BTP AI Core FinOps Dashboard - Monitor AI Core capacity unit consumption
+parameters:
+  enable-parallel-deployments: true
+  deploy_mode: html5-repo
+build-parameters:
+  before-all:
+    - builder: custom
+      commands:
+        - npm ci
+        - npm run build:cf
+
+modules:
+  - name: ai-core-finops-srv
+    type: nodejs
+    path: gen/srv
+    deployed-after:
+      - ai-core-finops-db-deployer
+    parameters:
+      buildpack: nodejs_buildpack
+      disk-quota: 512M
+      memory: 256M
+    build-parameters:
+      builder: npm
+      ignore:
+        - node_modules/
+    provides:
+      - name: srv-api
+        properties:
+          srv-url: ${default-url}
+    requires:
+      - name: ai-core-finops-auth
+      - name: ai-core-finops-dest
+      - name: ai-core-finops-db
+      - name: ai-core-finops-uas
+      # - name: ai-core-finops-scheduler  # OPTIONAL: Uncomment to enable automated daily checks
+      # - name: ai-core-finops-ans  # OPTIONAL: Uncomment if using ANS
+
+  - name: ai-core-finops-db-deployer
+    type: hdb
+    path: gen/db
+    build-parameters:
+      builder: npm
+      ignore:
+        - node_modules/
+    parameters:
+      buildpack: nodejs_buildpack
+      disk-quota: 256M
+      memory: 256M
+    requires:
+      - name: ai-core-finops-db
+
+  - name: ai-core-finops-dest-content
+    type: com.sap.application.content
+    requires:
+      - name: ai-core-finops-dest
+        parameters:
+          content-target: true
+      - name: srv-api
+      - name: ai-core-finops-auth
+        parameters:
+          service-key:
+            name: ai-core-finops-auth-key
+      - name: ai-core-finops-repo-host
+        parameters:
+          service-key:
+            name: ai-core-finops-repo-host-key
+    parameters:
+      content:
+        subaccount:
+          destinations:
+            - Name: ai-core-finops-srv
+              Authentication: OAuth2JWTBearer
+              TokenServiceInstanceName: ai-core-finops-auth
+              TokenServiceKeyName: ai-core-finops-auth-key
+              URL: ~{srv-api/srv-url}
+              sap.cloud.service: sap.aicore.finops
+              HTML5.DynamicDestination: true
+              WebIDEEnabled: true
+              WebIDEUsage: odata_gen
+          existing_destinations_policy: update
+        instance:
+          destinations:
+            - Name: ai-core-finops-srv
+              Authentication: OAuth2JWTBearer
+              TokenServiceInstanceName: ai-core-finops-auth
+              TokenServiceKeyName: ai-core-finops-auth-key
+              URL: ~{srv-api/srv-url}
+              sap.cloud.service: sap.aicore.finops
+              HTML5.Timeout: 120000
+            - Name: ai-core-finops-repo-host
+              ServiceInstanceName: ai-core-finops-repo-host
+              ServiceKeyName: ai-core-finops-repo-host-key
+              sap.cloud.service: sap.aicore.finops
+            - Name: ai-core-finops-auth
+              Authentication: OAuth2UserTokenExchange
+              ServiceInstanceName: ai-core-finops-auth
+              ServiceKeyName: ai-core-finops-auth-key
+              sap.cloud.service: sap.aicore.finops
+          existing_destinations_policy: update
+    build-parameters:
+      no-source: true
+
+  - name: ai-core-finops-app-content
+    type: com.sap.application.content
+    path: .
+    requires:
+      - name: ai-core-finops-repo-host
+        parameters:
+          content-target: true
+          service-key:
+            name: ai-core-finops-repo-host-key
+    build-parameters:
+      build-result: resources
+      requires:
+        - name: aiconsumptionmonitor
+          target-path: resources/
+          artifacts:
+            - aiconsumptionmonitor.zip
+
+  - name: aiconsumptionmonitor
+    type: html5
+    path: app/dashboard
+    build-parameters:
+      build-result: dist
+      builder: custom
+      commands:
+        - npm install
+        - npm run build:cf
+      supported-platforms: []
+
+resources:
+  - name: ai-core-finops-db
+    type: com.sap.xs.hdi-container
+    parameters:
+      service: hana
+      service-plan: hdi-shared
+      config:
+        schema: AI_CORE_FINOPS_${space}
+      service-keys:
+        - name: ai-core-finops-db-key
+
+  # OPTIONAL: Uncomment to enable automated scheduled checks (Job Scheduler)
+  # Without this, use the "Run Check" button in the UI to pull data on-demand.
+  # - name: ai-core-finops-scheduler
+  #   type: org.cloudfoundry.managed-service
+  #   parameters:
+  #     service: jobscheduler
+  #     service-plan: standard
+  #     config:
+  #       enable-xsuaa-support: true
+  #     service-keys:
+  #       - name: ai-core-finops-scheduler-key
+
+  - name: ai-core-finops-uas
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: uas
+      service-plan: reporting-ga-admin
+      service-keys:
+        - name: ai-core-finops-uas-key
+
+  # Uncomment if using SAP Alert Notification Service:
+  # - name: ai-core-finops-ans
+  #   type: org.cloudfoundry.managed-service
+  #   parameters:
+  #     service: alert-notification
+  #     service-plan: standard
+  #     service-keys:
+  #       - name: ai-core-finops-ans-key
+
+  - name: ai-core-finops-auth
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      path: ./xs-security.json
+      config:
+        xsappname: ai-core-finops-${space}
+        tenant-mode: dedicated
+      service-keys:
+        - name: ai-core-finops-auth-key
+
+  - name: ai-core-finops-repo-host
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: html5-apps-repo
+      service-plan: app-host
+      service-keys:
+        - name: ai-core-finops-repo-host-key
+
+  - name: ai-core-finops-dest
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+      config:
+        HTML5Runtime_enabled: true
+        init_data:
+          instance:
+            destinations:
+              - Authentication: NoAuthentication
+                Name: ui5
+                ProxyType: Internet
+                Type: HTTP
+                URL: https://ui5.sap.com
+            existing_destinations_policy: update
+        version: 1.0.0
+      service-keys:
+        - name: ai-core-finops-dest-key

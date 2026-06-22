@@ -1,0 +1,75 @@
+{
+    "_version": "1.21.0",
+    "sap.app": {
+        "id": "aiconsumptionmonitor",
+        "type": "application",
+        "applicationVersion": {
+            "version": "1.0.0"
+        },
+        "title": "AI Core FinOps Dashboard",
+        "description": "Monitor and manage AI Core capacity unit consumption",
+        "dataSources": {
+            "mainService": {
+                "uri": "service/FinOpsService/",
+                "type": "OData",
+                "settings": {
+                    "odataVersion": "4.0"
+                }
+            }
+        },
+        "crossNavigation": {
+            "inbounds": {
+                "aiconsumptionmonitor-display": {
+                    "semanticObject": "AIConsumptionMonitor",
+                    "action": "display",
+                    "title": "AI Core FinOps",
+                    "subtitle": "Monitor AI Core Consumption",
+                    "icon": "sap-icon://performance",
+                    "signature": {
+                        "parameters": {},
+                        "additionalParameters": "allowed"
+                    }
+                }
+            }
+        }
+    },
+    "sap.ui": {
+        "technology": "UI5",
+        "icons": {
+            "icon": "sap-icon://performance"
+        },
+        "deviceTypes": {
+            "desktop": true,
+            "tablet": true,
+            "phone": true
+        }
+    },
+    "sap.ui5": {
+        "dependencies": {
+            "minUI5Version": "1.120.0",
+            "libs": {
+                "sap.ui.core": {},
+                "sap.m": {}
+            }
+        },
+        "contentDensities": {
+            "compact": true,
+            "cozy": true
+        },
+        "resources": {
+            "css": []
+        },
+        "rootView": {
+            "type": "XML",
+            "id": "app"
+        }
+    },
+    "sap.cloud": {
+        "public": true,
+        "service": "sap.aicore.finops"
+    },
+    "sap.fiori": {
+        "registrationIds": [],
+        "archeType": "analytical"
+    }
+}

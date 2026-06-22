@@ -1,0 +1,145 @@
+namespace aicorefin;
+
+using { cuid, managed } from '@sap/cds/common';
+
+// ── Lookup / Reference Tables ─────────────────────────────────────────────────
+
+entity AlertLevels : cuid {
+    name        : String(20)  @title: 'Alert Level';
+    severity    : Integer     @title: 'Severity';  // 1=INFO, 2=WARNING, 3=ALERT
+    color       : String(20)  @title: 'Color Code';
+}
+
+entity NotificationChannels : cuid {
+    name        : String(20)  @title: 'Channel Name';  // SMTP, ANS
+}
+
+// ── Configuration Entities ────────────────────────────────────────────────────
+
+/**
+ * Each record represents one subaccount to monitor.
+ * Multiple records can be active simultaneously (multi-subaccount support).
+ */
+entity MonitoringConfigs : cuid, managed {
+    subaccountId            : String(100)   @title: 'Subaccount ID';
+    subaccountName          : String(200)   @title: 'Subaccount Name';
+    spendingLimit           : Decimal(15,2) @title: 'Monthly Spending Limit (CU)';
+    warningThresholdPct     : Decimal(5,2)  @title: 'Warning Threshold (%)';
+    alertThresholdPct       : Decimal(5,2)  @title: 'Alert Threshold (%)';
+    checkTimeUtc            : String(5)     @title: 'Daily Check Time (UTC)';
+    receiveDailyEmails      : Boolean       @title: 'Receive Daily Update Emails';
+    isActive                : Boolean       @title: 'Active';
+    displayOrder            : Integer       @title: 'Display Order';
+    tags                    : String(500)   @title: 'Tags (comma-separated)';
+}
+
+/**
+ * Shared notification configuration (one for all subaccounts).
+ *
+ * ANS credentials are NOT stored here — they come from the CF service binding
+ * (alert-notification service bound via MTA). Only the toggle and binding name
+ * are stored so the app knows whether ANS is enabled and which binding to use.
+ */
+entity NotificationConfigs : cuid, managed {
+    enableSmtp              : Boolean       @title: 'Enable SMTP';
+    smtpHost                : String(200)   @title: 'SMTP Host';
+    smtpPort                : Integer       @title: 'SMTP Port';
+    smtpUser                : String(200)   @title: 'SMTP User';
+    smtpPassword            : String(500)   @title: 'SMTP Password';
+    smtpFrom                : String(200)   @title: 'SMTP From Address';
+    smtpUseTls              : Boolean       @title: 'Use TLS';
+    senderName              : String(100)   @title: 'Sender Display Name';
+    notificationEmails      : String(1000)  @title: 'Recipient Emails (comma-separated)';
+    enableAns               : Boolean       @title: 'Enable ANS';
+    ansServiceName          : String(100)   @title: 'ANS Service Binding Name';  // CF binding name, e.g. "ai-core-finops-ans"
+}
+
+// ── Technical Consumption Data (from subaccountUsage API - daily) ──────────────
+
+entity ConsumptionRecords : cuid, managed {
+    recordDate              : Date          @title: 'Record Date';
+    reportYearMonth         : String(6)     @title: 'Report Year-Month';  // e.g. "202601"
+    subaccountId            : String(100)   @title: 'Subaccount ID';
+    subaccountName          : String(200)   @title: 'Subaccount Name';
+    totalCapacityUnits      : Decimal(20,6) @title: 'Total Capacity Units';
+    spendingLimit           : Decimal(15,2) @title: 'Spending Limit at Time';
+    percentageUsed          : Decimal(7,2)  @title: 'Percentage Used (%)';
+    projectedCu             : Decimal(20,6) @title: 'Projected Month-End CU';
+    daysElapsed             : Integer       @title: 'Days Elapsed';
+    daysInMonth             : Integer       @title: 'Days in Month';
+    interval                : String(10)    @title: 'Interval';  // 'daily' = provisional/till-date, 'monthly' = finalized
+    alertLevel              : Association to AlertLevels @title: 'Alert Level';
+    notificationSent        : Boolean       @title: 'Notification Sent';
+    modelUsages             : Composition of many ModelUsages on modelUsages.consumptionRecord = $self;
+    usageMetrics            : Composition of many UsageMetrics on usageMetrics.consumptionRecord = $self;
+}
+
+entity ModelUsages : cuid {
+    consumptionRecord       : Association to ConsumptionRecords @title: 'Consumption Record';
+    modelName               : String(200)   @title: 'Model / Application Name';
+    capacityUnits           : Decimal(20,6) @title: 'Total Capacity Units';
+    inferenceCu             : Decimal(20,6) @title: 'Inference CU';
+    groundingCu             : Decimal(20,6) @title: 'Grounding CU';
+    genaiTokenCu            : Decimal(20,6) @title: 'GenAI Token CU';
+    dataIndexedCu           : Decimal(20,6) @title: 'Data Indexed CU';
+    inputTokens             : Decimal(20,0) @title: 'Input Tokens';
+    outputTokens            : Decimal(20,0) @title: 'Output Tokens';
+    totalTokens             : Decimal(20,0) @title: 'Total Tokens';
+    sharePercentage         : Decimal(7,2)  @title: 'Share (%)';
+}
+
+/**
+ * Generic usage metrics — stores ALL measures from UAS API per application.
+ * This supports any current and future measure types without schema changes.
+ */
+entity UsageMetrics : cuid {
+    consumptionRecord       : Association to ConsumptionRecords @title: 'Consumption Record';
+    application             : String(200)   @title: 'Application';        // e.g. "gpt-4o", "vector_storage"
+    instanceId              : String(200)   @title: 'Instance ID';        // e.g. "document-grounding"
+    measureId               : String(100)   @title: 'Measure ID';         // e.g. "capacity_units", "input_tokens"
+    metricName              : String(200)   @title: 'Metric Name';        // e.g. "Capacity Unit", "Input Tokens"
+    usage                   : Decimal(20,6) @title: 'Usage Value';
+    unit                    : String(50)    @title: 'Unit';               // e.g. "capacity units", "tokens"
+}
+
+// ── Commercial Data (from monthlySubaccountsCost API - monthly) ───────────────
+
+/**
+ * Stores commercial/billing data from the monthlySubaccountsCost endpoint.
+ * Monthly granularity — one record per service+measure per month.
+ */
+entity CommercialMeasures : cuid, managed {
+    reportYearMonth         : String(6)     @title: 'Report Year-Month';  // e.g. "202601"
+    subaccountId            : String(100)   @title: 'Subaccount ID';
+    subaccountName          : String(200)   @title: 'Subaccount Name';
+    serviceId               : String(100)   @title: 'Service ID';         // "ai-core"
+    serviceName             : String(200)   @title: 'Service Name';       // "AI Core"
+    plan                    : String(100)   @title: 'Plan';               // "extended"
+    planName                : String(200)   @title: 'Plan Name';          // "Extended"
+    measureId               : String(100)   @title: 'Measure ID';         // "capacity_units"
+    metricName              : String(200)   @title: 'Metric Name';        // "Capacity Unit"
+    usage                   : Decimal(20,6) @title: 'Usage';
+    actualUsage             : Decimal(20,6) @title: 'Actual Usage';
+    chargedBlocks           : Decimal(20,6) @title: 'Charged Blocks';
+    cost                    : Decimal(15,4) @title: 'Cost';
+    currency                : String(3)     @title: 'Currency';           // "EUR", "USD"
+    paygCost                : Decimal(15,4) @title: 'PAYG Cost';
+    cloudCreditsCost        : Decimal(15,4) @title: 'Cloud Credits Cost';
+    unit                    : String(50)    @title: 'Unit';
+}
+
+// ── Alert / Notification Log ──────────────────────────────────────────────────
+
+entity AlertLogs : cuid, managed {
+    alertTimestamp          : Timestamp     @title: 'Alert Timestamp';
+    alertLevel              : Association to AlertLevels @title: 'Alert Level';
+    subaccountId            : String(100)   @title: 'Subaccount ID';
+    subaccountName          : String(200)   @title: 'Subaccount Name';
+    totalCu                 : Decimal(20,6) @title: 'Total CU at Alert Time';
+    percentageUsed          : Decimal(7,2)  @title: 'Percentage Used (%)';
+    spendingLimit           : Decimal(15,2) @title: 'Spending Limit';
+    message                 : String(2000)  @title: 'Alert Message';
+    smtpSent                : Boolean       @title: 'SMTP Sent';
+    ansSent                 : Boolean       @title: 'ANS Sent';
+    recipients              : String(1000)  @title: 'Recipients';
+}

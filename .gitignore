@@ -1,0 +1,15 @@
+node_modules/
+gen/
+dist/
+mta_archives/
+resources/
+*.mtar
+.env
+db.sqlite
+default-env.json
+@cds-models/
+package-lock.json
+app/dashboard/node_modules/
+app/dashboard/dist/
+.DS_Store
+.clinerules

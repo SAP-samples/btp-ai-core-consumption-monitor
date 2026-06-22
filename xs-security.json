@@ -1,0 +1,63 @@
+{
+  "xsappname": "btp-ai-core-finops",
+  "tenant-mode": "dedicated",
+  "description": "Security profile for BTP AI Core FinOps Dashboard",
+  "scopes": [
+    {
+      "name": "uaa.user",
+      "description": "UAA"
+    },
+    {
+      "name": "$XSAPPNAME.Admin",
+      "description": "Full access - can manage configuration and view consumption"
+    },
+    {
+      "name": "$XSAPPNAME.Viewer",
+      "description": "Read access - can view consumption data"
+    }
+  ],
+  "role-templates": [
+    {
+      "name": "Token_Exchange",
+      "description": "UAA",
+      "scope-references": [
+        "uaa.user"
+      ]
+    },
+    {
+      "name": "Admin",
+      "description": "Administrator - full access to manage configuration and view consumption",
+      "scope-references": [
+        "$XSAPPNAME.Admin",
+        "uaa.user"
+      ]
+    },
+    {
+      "name": "Viewer",
+      "description": "Viewer - can view consumption data and dashboards",
+      "scope-references": [
+        "$XSAPPNAME.Viewer",
+        "uaa.user"
+      ]
+    }
+  ],
+  "role-collections": [
+    {
+      "name": "AICore_FinOps_Admin",
+      "description": "Admin role collection for AI Core FinOps Dashboard",
+      "role-template-references": [
+        "$XSAPPNAME.Admin",
+        "$XSAPPNAME.Token_Exchange"
+      ]
+    },
+    {
+      "name": "AICore_FinOps_Viewer",
+      "description": "Viewer role collection for AI Core FinOps Dashboard",
+      "role-template-references": [
+        "$XSAPPNAME.Viewer",
+        "$XSAPPNAME.Token_Exchange"
+      ]
+    }
+  ],
+  "attributes": []
+}

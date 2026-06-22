@@ -1,0 +1,2 @@
+ID;enableSmtp;smtpHost;smtpPort;smtpUser;smtpPassword;smtpFrom;smtpUseTls;senderName;notificationEmails;enableAns;ansServiceName
+d0e00001-0000-4000-8000-000000000001;true;smtp.example.com;587;monitor@example.com;;monitor@example.com;true;AI Core FinOps Monitor;admin@example.com;false;ai-core-finops-ans

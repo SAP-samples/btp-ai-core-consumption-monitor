@@ -1,0 +1,2 @@
+ID;subaccountId;subaccountName;spendingLimit;warningThresholdPct;alertThresholdPct;checkTimeUtc;receiveDailyEmails;isActive;displayOrder;tags
+b0e00001-0000-4000-8000-000000000001;00000000-0000-0000-0000-000000000000;Default Subaccount;100.00;60.00;80.00;07:00;false;true;1;default

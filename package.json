@@ -1,0 +1,51 @@
+{
+	"name": "btp-ai-core-finops",
+	"version": "1.0.0",
+	"description": "BTP AI Core FinOps Dashboard - Monitor AI Core capacity unit consumption",
+	"private": true,
+	"dependencies": {
+		"@cap-js/hana": "^1.9.2",
+		"@sap/cds": "^8.9.10",
+		"@sap/hana-client": "^2.28.21",
+		"@sap/xsenv": "^6",
+		"@sap/xssec": "^4",
+		"express": "^4",
+		"nodemailer": "^6.9",
+		"passport": "^0.7"
+	},
+	"devDependencies": {
+		"@cap-js/sqlite": "^1.11.1",
+		"@sap/cds-dk": "^8",
+		"eslint": "^9"
+	},
+	"engines": {
+		"node": ">=20"
+	},
+	"scripts": {
+		"start": "cds-serve",
+		"watch": "cds watch",
+		"build": "mbt build --mtar ai-core-finops.mtar",
+		"build:cf": "npx cds build --production",
+		"deploy": "cf deploy mta_archives/ai-core-finops.mtar --retries 1 --delete-services",
+		"undeploy": "cf undeploy btp-ai-core-finops --delete-services --delete-service-keys --delete-service-brokers"
+	},
+	"cds": {
+		"requires": {
+			"db": {
+				"kind": "sql"
+			},
+			"auth": {
+				"kind": "dummy"
+			},
+			"[production]": {
+				"db": {
+					"kind": "hana-cloud"
+				},
+				"auth": {
+					"kind": "xsuaa"
+				}
+			}
+		},
+		"_comment_roles": "Auth is xsuaa (login required) but no @requires annotations = any authenticated user has full access. To add roles later, uncomment @requires in srv/service.cds"
+	}
+}
