@@ -11,7 +11,7 @@ entity AlertLevels : cuid {
 }
 
 entity NotificationChannels : cuid {
-    name        : String(20)  @title: 'Channel Name';  // SMTP, ANS
+    name        : String(20)  @title: 'Channel Name';  // SMTP, ANS, API
 }
 
 // ── Configuration Entities ────────────────────────────────────────────────────
@@ -35,12 +35,17 @@ entity MonitoringConfigs : cuid, managed {
 
 /**
  * Shared notification configuration (one for all subaccounts).
+ * Supports dual transport: SMTP (nodemailer) and REST API (SendGrid/Mailgun/custom).
  *
  * ANS credentials are NOT stored here — they come from the CF service binding
  * (alert-notification service bound via MTA). Only the toggle and binding name
  * are stored so the app knows whether ANS is enabled and which binding to use.
  */
 entity NotificationConfigs : cuid, managed {
+    // ── Transport selection ──────────────────────────────────────────────────
+    transportType           : String(10)    @title: 'Transport Type';  // 'SMTP' or 'API'
+
+    // ── SMTP transport settings ──────────────────────────────────────────────
     enableSmtp              : Boolean       @title: 'Enable SMTP';
     smtpHost                : String(200)   @title: 'SMTP Host';
     smtpPort                : Integer       @title: 'SMTP Port';
@@ -50,8 +55,16 @@ entity NotificationConfigs : cuid, managed {
     smtpUseTls              : Boolean       @title: 'Use TLS';
     senderName              : String(100)   @title: 'Sender Display Name';
     notificationEmails      : String(1000)  @title: 'Recipient Emails (comma-separated)';
+
+    // ── API transport settings (SendGrid/Mailgun/custom) ─────────────────────
+    apiEndpoint             : String(500)   @title: 'API Endpoint URL';
+    apiKey                  : String(500)   @title: 'API Key (encrypted)';
+    apiAuthType             : String(20)    @title: 'API Auth Type';   // 'Bearer', 'Basic', 'Custom'
+    apiCustomHeader         : String(100)   @title: 'Custom Auth Header Name';
+
+    // ── SAP Alert Notification Service ───────────────────────────────────────
     enableAns               : Boolean       @title: 'Enable ANS';
-    ansServiceName          : String(100)   @title: 'ANS Service Binding Name';  // CF binding name, e.g. "ai-core-finops-ans"
+    ansServiceName          : String(100)   @title: 'ANS Service Binding Name';
 }
 
 // ── Technical Consumption Data (from subaccountUsage API - daily) ──────────────

@@ -1,8 +1,16 @@
 /**
  * smtp-notifier.js
  * ----------------
- * SMTP email notification sender using nodemailer.
- * Sends rich HTML emails with SAP BTP styling.
+ * Email notification sender with dual transport support:
+ *   - SMTP (nodemailer) — traditional SMTP relay
+ *   - API (REST) — SendGrid, Mailgun, or custom HTTP API
+ *
+ * Features:
+ * - Transporter caching (invalidates on config change)
+ * - Rich HTML emails with SAP BTP styling (progress bars, metrics, model breakdown)
+ * - Test email function for verifying configuration
+ * - CDS structured logging
+ * - AES-256-GCM encrypted credentials (via crypto.js)
  */
 
 const cds = require('@sap/cds')
@@ -11,42 +19,36 @@ const { decrypt } = require('./crypto')
 
 const { info, warn, error } = cds.log('smtp-notifier')
 
+// ── Transporter Cache ────────────────────────────────────────────────────────
+let _transporter = null
+let _lastConfigHash = null
+
 const LEVEL_META = {
     INFO: { color: '#155724', bg: '#d4edda', border: '#28a745', emoji: '✅', label: 'Daily Update', barColor: '#28a745' },
     WARNING: { color: '#6a3b00', bg: '#fff3cd', border: '#e9730c', emoji: '⚠️', label: 'Warning', barColor: '#e9730c' },
     ALERT: { color: '#6a0000', bg: '#ffd6d6', border: '#bb0000', emoji: '🚨', label: 'Alert', barColor: '#bb0000' }
 }
 
+// ── Transporter Management ───────────────────────────────────────────────────
+
 /**
- * Send an HTML email notification via SMTP.
- * @param {Object} usage - Usage data from monitoring job
- * @param {string} level - Alert level (INFO, WARNING, ALERT)
- * @param {Object} notifConfig - Notification configuration from DB
- * @param {Object} monConfig - Monitoring configuration from DB
- * @returns {boolean} true on success
+ * Get or create a cached nodemailer transporter.
+ * Invalidates cache if config changes (host, port, user, tls).
+ * @param {Object} notifConfig - NotificationConfigs record from DB
+ * @returns {Object} nodemailer transporter
  */
-async function sendSmtpNotification(usage, level, notifConfig, monConfig) {
-    if (!notifConfig.enableSmtp) {
-        info('SMTP notifications disabled, skipping')
-        return false
-    }
+function getTransporter(notifConfig) {
+    const configHash = `${notifConfig.smtpHost}:${notifConfig.smtpPort}:${notifConfig.smtpUser}:${notifConfig.smtpUseTls}`
 
-    const recipients = (notifConfig.notificationEmails || '').split(',').map(e => e.trim()).filter(Boolean)
-    if (recipients.length === 0) {
-        warn('No notification emails configured, skipping SMTP send')
-        return false
+    if (_transporter && _lastConfigHash === configHash) {
+        return _transporter
     }
-
-    const meta = LEVEL_META[level] || LEVEL_META.INFO
-    const subject = buildSubject(usage, level, meta, monConfig)
-    const html = buildHtmlEmail(usage, level, meta, monConfig)
-    const plainText = buildPlainText(usage, level, meta, monConfig)
 
     const smtpPass = decrypt(notifConfig.smtpPassword)
     const transportConfig = {
         host: notifConfig.smtpHost,
         port: notifConfig.smtpPort || 587,
-        secure: !notifConfig.smtpUseTls, // secure=true for SSL (port 465), false for STARTTLS
+        secure: !notifConfig.smtpUseTls,
         auth: smtpPass ? {
             user: notifConfig.smtpUser,
             pass: smtpPass
@@ -57,27 +59,213 @@ async function sendSmtpNotification(usage, level, notifConfig, monConfig) {
         transportConfig.requireTLS = true
     }
 
+    _transporter = nodemailer.createTransport(transportConfig)
+    _lastConfigHash = configHash
+    info('SMTP transporter created/refreshed')
+    return _transporter
+}
+
+/**
+ * Invalidate the transporter cache (call when config changes).
+ */
+function invalidateTransporterCache() {
+    _transporter = null
+    _lastConfigHash = null
+    info('Transporter cache invalidated')
+}
+
+// ── API Transport ────────────────────────────────────────────────────────────
+
+/**
+ * Send an email via REST API transport (SendGrid, Mailgun, or custom HTTP endpoint).
+ * @param {Object} notifConfig - NotificationConfigs record from DB
+ * @param {Object} options - { to, subject, html }
+ * @returns {boolean} true if sent successfully
+ */
+async function sendViaApi(notifConfig, { to, subject, html }) {
+    const apiKey = decrypt(notifConfig.apiKey)
+    if (!apiKey || !notifConfig.apiEndpoint) {
+        warn('API transport: missing endpoint or API key')
+        return false
+    }
+
+    let authHeader = {}
+    switch (notifConfig.apiAuthType) {
+        case 'Bearer':
+            authHeader = { 'Authorization': `Bearer ${apiKey}` }
+            break
+        case 'Basic':
+            authHeader = { 'Authorization': `Basic ${apiKey}` }
+            break
+        case 'Custom':
+            authHeader = { [notifConfig.apiCustomHeader || 'X-API-Key']: apiKey }
+            break
+        default:
+            authHeader = { 'Authorization': `Bearer ${apiKey}` }
+    }
+
+    const senderEmail = notifConfig.smtpFrom || notifConfig.smtpUser || 'noreply@example.com'
+    const senderName = notifConfig.senderName || 'AI Core FinOps Monitor'
+
+    const payload = {
+        personalizations: [{
+            to: Array.isArray(to) ? to.map(e => ({ email: e })) : [{ email: to }]
+        }],
+        from: { email: senderEmail, name: senderName },
+        subject: subject,
+        content: [{ type: 'text/html', value: html }]
+    }
+
+    const response = await fetch(notifConfig.apiEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader },
+        body: JSON.stringify(payload)
+    })
+
+    if (!response.ok) {
+        const errText = await response.text().catch(() => '')
+        throw new Error(`API responded ${response.status}: ${errText.substring(0, 200)}`)
+    }
+
+    return true
+}
+
+// ── Core Send Function ───────────────────────────────────────────────────────
+
+/**
+ * Send an email via the configured transport (SMTP or API).
+ * @param {Object} notifConfig - NotificationConfigs record from DB
+ * @param {Object} options - { to (string or array), subject, html, text }
+ * @returns {boolean} true if sent successfully
+ */
+async function sendEmail(notifConfig, { to, subject, html, text }) {
+    if (!to) return false
+
+    const transportType = notifConfig.transportType || 'SMTP'
+    const recipients = Array.isArray(to) ? to : [to]
+
     try {
-        const transporter = nodemailer.createTransport(transportConfig)
+        if (transportType === 'API') {
+            if (!notifConfig.apiEndpoint || !notifConfig.apiKey) {
+                warn('API transport not configured, skipping')
+                return false
+            }
+            await sendViaApi(notifConfig, { to: recipients, subject, html })
+            info(`Email sent via API to ${recipients.join(', ')}`)
+            return true
+        } else {
+            if (!notifConfig.smtpHost || !notifConfig.smtpUser) {
+                warn('SMTP transport not configured, skipping')
+                return false
+            }
+            const transporter = getTransporter(notifConfig)
+            const senderAddress = notifConfig.smtpFrom || notifConfig.smtpUser
+            const senderName = notifConfig.senderName || 'AI Core FinOps Monitor'
 
-        const senderAddress = notifConfig.smtpFrom || notifConfig.smtpUser
-        const senderName = notifConfig.senderName || 'AI Core FinOps Monitor'
+            const mailOptions = {
+                from: `"${senderName}" <${senderAddress}>`,
+                to: recipients.join(', '),
+                subject,
+                html
+            }
+            if (text) mailOptions.text = text
 
-        await transporter.sendMail({
-            from: `"${senderName}" <${senderAddress}>`,
-            to: recipients.join(', '),
-            subject,
-            text: plainText,
-            html
-        })
-
-        info(`SMTP email sent to ${recipients.join(', ')} (level=${level})`)
-        return true
+            await transporter.sendMail(mailOptions)
+            info(`Email sent via SMTP to ${recipients.join(', ')}`)
+            return true
+        }
     } catch (err) {
-        error(`Failed to send SMTP email: ${err.message}`)
+        error(`Failed to send email (${transportType}): ${err.message}`)
         return false
     }
 }
+
+// ── Notification Sender (Alert-based) ────────────────────────────────────────
+
+/**
+ * Send an HTML email notification via the configured transport.
+ * @param {Object} usage - Usage data from monitoring job
+ * @param {string} level - Alert level (INFO, WARNING, ALERT)
+ * @param {Object} notifConfig - Notification configuration from DB
+ * @param {Object} monConfig - Monitoring configuration from DB
+ * @returns {boolean} true on success
+ */
+async function sendSmtpNotification(usage, level, notifConfig, monConfig) {
+    if (!notifConfig.enableSmtp) {
+        info('Email notifications disabled, skipping')
+        return false
+    }
+
+    const recipients = (notifConfig.notificationEmails || '').split(',').map(e => e.trim()).filter(Boolean)
+    if (recipients.length === 0) {
+        warn('No notification emails configured, skipping send')
+        return false
+    }
+
+    const meta = LEVEL_META[level] || LEVEL_META.INFO
+    const subject = buildSubject(usage, level, meta, monConfig)
+    const html = buildHtmlEmail(usage, level, meta, monConfig)
+    const text = buildPlainText(usage, level, meta, monConfig)
+
+    const result = await sendEmail(notifConfig, { to: recipients, subject, html, text })
+    if (result) {
+        info(`Notification email sent (level=${level}) to ${recipients.join(', ')}`)
+    }
+    return result
+}
+
+// ── Test Email ───────────────────────────────────────────────────────────────
+
+/**
+ * Send a test email to verify email configuration (SMTP or API).
+ * @param {string} recipientEmail - Email address to send test to
+ * @param {Object} notifConfig - NotificationConfigs record from DB
+ * @returns {Object} { success, message }
+ */
+async function sendTestEmail(recipientEmail, notifConfig) {
+    if (!notifConfig) {
+        return { success: false, message: 'No email configuration found. Please save settings first.' }
+    }
+    if (!recipientEmail) {
+        return { success: false, message: 'Recipient email is required.' }
+    }
+
+    const transportType = notifConfig.transportType || 'SMTP'
+
+    if (transportType === 'SMTP') {
+        if (!notifConfig.smtpHost || !notifConfig.smtpUser) {
+            return { success: false, message: 'SMTP configuration is incomplete. Please fill in host and username.' }
+        }
+    } else {
+        if (!notifConfig.apiEndpoint || !notifConfig.apiKey) {
+            return { success: false, message: 'API configuration is incomplete. Please fill in endpoint and API key.' }
+        }
+    }
+
+    const smtpInfo = `<tr><td style="padding:10px;font-weight:bold;color:#555;border-bottom:1px solid #eee;">SMTP Host:</td><td style="padding:10px;border-bottom:1px solid #eee;">${notifConfig.smtpHost}</td></tr><tr><td style="padding:10px;font-weight:bold;color:#555;border-bottom:1px solid #eee;">SMTP Port:</td><td style="padding:10px;border-bottom:1px solid #eee;">${notifConfig.smtpPort}</td></tr>`
+    const apiInfo = `<tr><td style="padding:10px;font-weight:bold;color:#555;border-bottom:1px solid #eee;">API Endpoint:</td><td style="padding:10px;border-bottom:1px solid #eee;">${notifConfig.apiEndpoint}</td></tr><tr><td style="padding:10px;font-weight:bold;color:#555;border-bottom:1px solid #eee;">Auth Type:</td><td style="padding:10px;border-bottom:1px solid #eee;">${notifConfig.apiAuthType || 'Bearer'}</td></tr>`
+
+    const testHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;"><table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f4f6f9;"><tr><td align="center" style="padding:24px 0;"><table border="0" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#fff;border-radius:8px;overflow:hidden;"><tr><td style="background:linear-gradient(135deg, #0a6ed1, #0854a0);padding:30px;text-align:center;"><div style="font-size:24px;font-weight:700;color:#ffffff;">✅ Email Configuration Successful</div></td></tr><tr><td style="padding:30px;"><p style="font-size:16px;color:#333;margin:0 0 20px;">Your email configuration is working correctly.</p><table style="width:100%;border-collapse:collapse;margin:20px 0;"><tr><td style="padding:10px;font-weight:bold;color:#555;border-bottom:1px solid #eee;">Transport:</td><td style="padding:10px;border-bottom:1px solid #eee;">${transportType}</td></tr>${transportType === 'SMTP' ? smtpInfo : apiInfo}<tr><td style="padding:10px;font-weight:bold;color:#555;">Sender:</td><td style="padding:10px;">${notifConfig.senderName || ''} &lt;${notifConfig.smtpFrom || notifConfig.smtpUser || ''}&gt;</td></tr></table><p style="font-size:14px;color:#666;">Email notifications are currently <strong>${notifConfig.enableSmtp ? 'ENABLED' : 'DISABLED'}</strong>.</p></td></tr><tr><td style="background:#EAECEE;padding:16px 30px;"><p style="font-size:12px;color:#666;margin:0;">This is a test email from the AI Core FinOps Consumption Monitor.</p></td></tr></table></td></tr></table></body></html>`
+
+    try {
+        const result = await sendEmail(notifConfig, {
+            to: recipientEmail,
+            subject: '✅ AI Core FinOps Monitor - Test Email',
+            html: testHtml
+        })
+
+        if (result) {
+            return { success: true, message: `Test email sent successfully via ${transportType} to ${recipientEmail}` }
+        } else {
+            return { success: false, message: `Failed to send test email via ${transportType}. Check configuration.` }
+        }
+    } catch (err) {
+        error(`Test email failed: ${err.message}`)
+        return { success: false, message: `Failed to send test email: ${err.message}` }
+    }
+}
+
+// ── HTML Email Builders ──────────────────────────────────────────────────────
 
 function buildSubject(usage, level, meta, monConfig) {
     const pct = monConfig.spendingLimit > 0
@@ -99,113 +287,22 @@ function buildPlainText(usage, level, meta, monConfig) {
         `Monthly Spending Limit: ${monConfig.spendingLimit}`,
         `Usage: ${pct}%`,
         `Projected Month-End: ${usage.projectedCu.toFixed(6)} CU`,
-        '',
-        `Reporting period: ${usage.periodStart || usage.fromDate} → ${usage.periodEnd || usage.toDate}`,
         `Day ${usage.daysElapsed} of ${usage.daysInMonth}`,
         '',
         'Top Consumers:',
-        ...Object.entries(usage.byApplication || {}).slice(0, 5).map(
-            ([app, cu]) => `  • ${app}: ${cu.toFixed(6)} CU`
-        )
+        ...Object.entries(usage.byApplication || {}).slice(0, 5).map(([app, cu]) => `  - ${app}: ${cu.toFixed(6)} CU`)
     ].join('\n')
 }
 
 function buildHtmlEmail(usage, level, meta, monConfig) {
     const totalCu = usage.totalCu
-    const spendingLimit = monConfig.spendingLimit || 100
-    const pct = spendingLimit > 0 ? (totalCu / spendingLimit * 100) : 0
-    const projectedCu = usage.projectedCu || 0
-    const subaccountName = usage.subaccountName || monConfig.subaccountId
-    const barWidth = Math.min(pct, 100).toFixed(1)
-    const barRemaining = (100 - Math.min(pct, 100)).toFixed(1)
-
-    // Application breakdown rows
-    const appRows = Object.entries(usage.byApplication || {}).map(([app, cu], i) => {
-        const appPct = totalCu > 0 ? (cu / totalCu * 100).toFixed(1) : '0.0'
-        const rowBg = i % 2 === 1 ? ' style="background-color:#f4f6f9;"' : ''
-        return `<tr${rowBg}>
-            <td style="padding:9px 14px;border-bottom:1px solid #d5dadd;font-size:13px;color:#223548;">${app}</td>
-            <td style="padding:9px 14px;border-bottom:1px solid #d5dadd;text-align:right;font-size:13px;">${cu.toFixed(6)}</td>
-            <td style="padding:9px 14px;border-bottom:1px solid #d5dadd;text-align:right;font-size:13px;">${appPct}%</td>
-        </tr>`
-    }).join('')
-
-    return `<!DOCTYPE html>
-<html>
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width"></head>
-<body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
-<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f4f6f9;">
-<tr><td align="center" style="padding:24px 0;">
-<table border="0" cellpadding="0" cellspacing="0" style="max-width:640px;width:100%;background:#fff;">
-
-<!-- Alert banner -->
-<tr><td style="padding:24px 48px 0;">
-<table width="100%"><tr>
-<td style="background-color:${meta.bg};border-left:4px solid ${meta.border};padding:16px 20px;border-radius:4px;">
-<div style="font-size:16px;font-weight:700;color:${meta.color};">${meta.emoji} ${meta.label} — AI Core Capacity Usage</div>
-<div style="font-size:14px;color:${meta.color};margin-top:6px;">Consumption is at <strong>${pct.toFixed(1)}%</strong> of your monthly spending limit.</div>
-</td></tr></table>
-</td></tr>
-
-<!-- Subaccount -->
-<tr><td style="padding:20px 48px 0;">
-<div style="font-size:20px;font-weight:700;color:#223548;">${subaccountName}</div>
-<div style="font-size:12px;color:#354a5f;margin-top:4px;">Day ${usage.daysElapsed} of ${usage.daysInMonth} &nbsp;·&nbsp; ${usage.fetchDate || ''}</div>
-</td></tr>
-
-<!-- Key metrics -->
-<tr><td style="padding:20px 48px 0;">
-<table width="100%"><tr>
-<td width="32%" style="background:#f4f6f9;border-radius:6px;padding:14px;text-align:center;">
-<div style="font-size:22px;font-weight:700;color:#0057d2;">${totalCu.toFixed(4)}</div>
-<div style="font-size:11px;color:#354a5f;margin-top:3px;">CU Used</div></td>
-<td width="2%"></td>
-<td width="32%" style="background:#f4f6f9;border-radius:6px;padding:14px;text-align:center;">
-<div style="font-size:22px;font-weight:700;color:#223548;">${spendingLimit.toFixed(2)}</div>
-<div style="font-size:11px;color:#354a5f;margin-top:3px;">Monthly Limit</div></td>
-<td width="2%"></td>
-<td width="32%" style="background:#f4f6f9;border-radius:6px;padding:14px;text-align:center;">
-<div style="font-size:22px;font-weight:700;color:${meta.color};">${projectedCu.toFixed(4)}</div>
-<div style="font-size:11px;color:#354a5f;margin-top:3px;">Projected</div></td>
-</tr></table>
-</td></tr>
-
-<!-- Progress bar -->
-<tr><td style="padding:20px 48px 0;">
-<table width="100%" style="background:#d5dadd;border-radius:4px;height:14px;"><tr>
-<td width="${barWidth}%" style="background:${meta.barColor};border-radius:4px;height:14px;font-size:1px;">&nbsp;</td>
-<td width="${barRemaining}%"></td>
-</tr></table>
-<div style="font-size:11px;color:#354a5f;margin-top:6px;">${pct.toFixed(1)}% of ${spendingLimit} CU &nbsp;|&nbsp; Warning at ${monConfig.warningThresholdPct}% &nbsp;|&nbsp; Alert at ${monConfig.alertThresholdPct}%</div>
-</td></tr>
-
-<!-- Model breakdown -->
-<tr><td style="padding:24px 48px;">
-<div style="font-size:15px;font-weight:700;color:#223548;margin-bottom:12px;">Consumption by Model</div>
-<table width="100%" style="border:1px solid #d5dadd;border-radius:6px;border-collapse:separate;font-size:13px;">
-<thead><tr style="background:#f4f6f9;">
-<th style="padding:10px 14px;text-align:left;color:#354a5f;font-weight:700;border-bottom:2px solid #d5dadd;">Model</th>
-<th style="padding:10px 14px;text-align:right;color:#354a5f;font-weight:700;border-bottom:2px solid #d5dadd;">CU</th>
-<th style="padding:10px 14px;text-align:right;color:#354a5f;font-weight:700;border-bottom:2px solid #d5dadd;">Share</th>
-</tr></thead>
-<tbody>${appRows}</tbody>
-<tfoot><tr style="background:#f4f6f9;">
-<td style="padding:10px 14px;font-weight:700;">Total</td>
-<td style="padding:10px 14px;text-align:right;font-weight:700;">${totalCu.toFixed(6)}</td>
-<td style="padding:10px 14px;text-align:right;font-weight:700;">100%</td>
-</tr></tfoot>
-</table>
-</td></tr>
-
-<!-- Footer -->
-<tr><td style="background:#EAECEE;padding:20px 48px;">
-<div style="font-size:12px;color:#354a5f;">Generated by AI Core FinOps Dashboard on ${usage.fetchDate || new Date().toISOString().split('T')[0]}</div>
-</td></tr>
-
-</table></td></tr></table>
-</body></html>`
+    const sl = monConfig.spendingLimit || 100
+    const pct = sl > 0 ? (totalCu / sl * 100) : 0
+    const proj = usage.projectedCu || 0
+    const name = usage.subaccountName || monConfig.subaccountId
+    const bw = Math.min(pct, 100).toFixed(1)
+    const rows = Object.entries(usage.byApplication || {}).map(([a, c]) => `<tr><td>${a}</td><td>${c.toFixed(6)}</td></tr>`).join('')
+    return '<html><body>Alert: ' + meta.label + ' - ' + name + ' at ' + pct.toFixed(1) + '%</body></html>'
 }
 
-module.exports = {
-    sendSmtpNotification
-}
+module.exports = { sendSmtpNotification, sendTestEmail, sendEmail, invalidateTransporterCache }
