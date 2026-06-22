@@ -10,7 +10,7 @@
 		"@sap/xsenv": "^6",
 		"@sap/xssec": "^4",
 		"express": "^4",
-		"nodemailer": "^6.10.1",
+		"nodemailer": "^7.0.3",
 		"passport": "^0.7"
 	},
 	"devDependencies": {
