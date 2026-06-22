@@ -255,7 +255,8 @@ async function runCheckForConfig(monConfig, dryRun = false, preloadedCostRecords
         if (shouldNotify) {
             info(`[${monConfig.subaccountName}] Sending ${level} notification...`)
 
-            notificationResults.smtp = await sendSmtpNotification(usage, level, notifConfig, monConfig)
+            const smtpRes = await sendSmtpNotification(usage, level, notifConfig, monConfig)
+            notificationResults.smtp = !!(smtpRes && smtpRes.success)
             notificationResults.ans = await sendAnsNotification(usage, level, notifConfig, monConfig)
 
             // Log the alert
