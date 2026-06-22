@@ -108,10 +108,14 @@ module.exports = class FinOpsService extends cds.ApplicationService {
             const smtpResult = await sendSmtpNotification(testUsage, 'INFO', notifConfig, monConfig)
             const ansResult = await sendAnsNotification(testUsage, 'INFO', notifConfig, monConfig)
 
+            const smtpOk = smtpResult && smtpResult.success
+            const smtpErr = (smtpResult && smtpResult.error) || ''
+            const ansOk = ansResult === true
+
             return {
-                smtpResult,
-                ansResult,
-                message: `Test notification sent. SMTP: ${smtpResult ? 'success' : 'failed/disabled'}, ANS: ${ansResult ? 'success' : 'failed/disabled'}`
+                smtpResult: smtpOk,
+                ansResult: ansOk,
+                message: 'Test notification sent. SMTP: ' + (smtpOk ? 'success' : 'failed (' + smtpErr + ')') + ', ANS: ' + (ansOk ? 'success' : 'failed/disabled')
             }
         })
 

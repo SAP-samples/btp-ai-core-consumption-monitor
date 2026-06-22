@@ -219,6 +219,18 @@ export async function testNotification() {
   return response.json()
 }
 
+export async function sendTestEmail(recipientEmail) {
+  const response = await mutationFetch(`${BASE_URL}/sendTestEmail`, {
+    method: 'POST',
+    body: JSON.stringify({ recipientEmail })
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error?.message || 'Failed to send test email')
+  }
+  return response.json()
+}
+
 // ── Consumption by Month (for Detail page) ───────────────────────────
 export async function fetchConsumptionByMonth(subaccountId, reportYearMonth) {
   let filter = `$filter=reportYearMonth eq '${reportYearMonth}'`
