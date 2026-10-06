@@ -19,6 +19,16 @@ const { info, warn, error } = cds.log('server')
  * checks manually via the UI or API.
  */
 cds.on('served', async (services) => {
+    // ── CMS directory sync (optional) ─────────────────────────────────────────
+    // Runs on every startup; no-op (and non-fatal) when the cis service is unbound.
+    try {
+        const { syncCMSDirectories } = require('./lib/cms-sync')
+        const status = await syncCMSDirectories()
+        info(`CMS sync: ${status}`)
+    } catch (e) {
+        error(`CMS sync failed (non-fatal): ${e.message}`)
+    }
+
     // Only attempt Job Scheduler registration on CF (when VCAP_SERVICES is available)
     if (!process.env.VCAP_SERVICES) {
         info('Local mode — Job Scheduler not available. Use the "Run Check" button or triggerCheck action to pull data manually.')

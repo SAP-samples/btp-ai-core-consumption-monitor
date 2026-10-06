@@ -308,23 +308,99 @@ export async function fetchCommercialMeasures(subaccountId, reportYearMonth) {
   return data.value || []
 }
 
-// ── Usage Metrics (Technical) ────────────────────────────────────────
-export async function fetchUsageMetrics(consumptionRecordId) {
-  const response = await fetch(`${BASE_URL}/UsageMetrics?$filter=consumptionRecord_ID eq '${consumptionRecordId}'&$orderby=usage desc`)
-  if (!response.ok) throw new Error(`Failed to fetch usage metrics: ${response.statusText}`)
-  const data = await response.json()
-  return data.value || []
-}
-
 // ── User Info ────────────────────────────────────────────────────────
 export async function fetchUserInfo() {
   try {
     const response = await fetch(`${BASE_URL}/userInfo()`)
-    if (!response.ok) return { user: 'anonymous', roles: ['Admin'] }
+    if (!response.ok) return { user: 'anonymous', roles: ['Viewer'] }
     return response.json()
   } catch {
-    return { user: 'anonymous', roles: ['Admin'] }
+    return { user: 'anonymous', roles: ['Viewer'] }
   }
+}
+
+// ── CMS Hierarchy & Subaccount Master ───────────────────────────────
+export async function fetchSubaccountsMaster() {
+  const response = await fetch(`${BASE_URL}/SubaccountMaster?$orderby=subaccountName asc`)
+  if (!response.ok) throw new Error(`Failed to fetch subaccount master: ${response.statusText}`)
+  const data = await response.json()
+  return data.value || []
+}
+
+export async function fetchCmsBusinessUnits() {
+  const response = await fetch(`${BASE_URL}/CMSBusinessUnits?$orderby=name asc`)
+  if (!response.ok) return []  // graceful: CMS may not be configured
+  const data = await response.json()
+  return data.value || []
+}
+
+export async function fetchCmsApplications(businessUnitId) {
+  const filter = businessUnitId ? `&$filter=businessUnitId eq '${businessUnitId}'` : ''
+  const response = await fetch(`${BASE_URL}/CMSApplications?$orderby=name asc${filter}`)
+  if (!response.ok) return []
+  const data = await response.json()
+  return data.value || []
+}
+
+export async function refreshCMSDirectories() {
+  const response = await mutationFetch(`${BASE_URL}/refreshCMSDirectories`, {
+    method: 'POST',
+    body: JSON.stringify({})
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error?.message || 'Failed to refresh CMS directories')
+  }
+  return response.json()
+}
+
+export async function enableMonitoring(subaccountId, spendingLimit, warningThresholdPct, alertThresholdPct) {
+  const response = await mutationFetch(`${BASE_URL}/enableMonitoring`, {
+    method: 'POST',
+    body: JSON.stringify({ subaccountId, spendingLimit, warningThresholdPct, alertThresholdPct })
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error?.message || 'Failed to enable monitoring')
+  }
+  return response.json()
+}
+
+export async function createSubaccountManual(payload) {
+  const response = await mutationFetch(`${BASE_URL}/SubaccountMaster`, {
+    method: 'POST',
+    body: JSON.stringify({ ...payload, discoveredViaCms: false, isMonitored: false })
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error?.message || 'Failed to create subaccount')
+  }
+  return response.json()
+}
+
+// ── AI-Core Breakdown Functions ──────────────────────────────────────
+export async function fetchModelBreakdown(reportYearMonth, subaccountId) {
+  const saParam = subaccountId ? `,subaccountId='${subaccountId}'` : ''
+  const response = await fetch(`${BASE_URL}/modelBreakdown(reportYearMonth='${reportYearMonth}'${saParam})`)
+  if (!response.ok) throw new Error(`Failed to fetch model breakdown: ${response.statusText}`)
+  const data = await response.json()
+  return data.value || data
+}
+
+export async function fetchTopModelsByCost(year, subaccountId, top = 10) {
+  const saParam = subaccountId ? `,subaccountId='${subaccountId}'` : ''
+  const response = await fetch(`${BASE_URL}/topModelsByCost(year=${year || new Date().getFullYear()},top=${top}${saParam})`)
+  if (!response.ok) throw new Error(`Failed to fetch top models by cost: ${response.statusText}`)
+  const data = await response.json()
+  return data.value || data
+}
+
+export async function fetchCuTypeTrend(year, subaccountId) {
+  const saParam = subaccountId ? `,subaccountId='${subaccountId}'` : ''
+  const response = await fetch(`${BASE_URL}/cuTypeTrend(year=${year || new Date().getFullYear()}${saParam})`)
+  if (!response.ok) throw new Error(`Failed to fetch CU type trend: ${response.statusText}`)
+  const data = await response.json()
+  return data.value || data
 }
 
 // ── Utility ──────────────────────────────────────────────────────────

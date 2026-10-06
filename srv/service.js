@@ -633,6 +633,261 @@ module.exports = class FinOpsService extends cds.ApplicationService {
             }
         })
 
+        // ── refreshCMSDirectories action ──────────────────────────────────────
+        this.on('refreshCMSDirectories', async () => {
+            info('refreshCMSDirectories called')
+            try {
+                const { syncCMSDirectories } = require('./lib/cms-sync')
+                const status = await syncCMSDirectories(true)  // force = bypass daily guard
+                return { status: 'ok', message: status }
+            } catch (err) {
+                error(`refreshCMSDirectories failed: ${err.message}`)
+                return { status: 'error', message: `Error: ${err.message}` }
+            }
+        })
+
+        // ── enableMonitoring action ───────────────────────────────────────────
+        // Opts a discovered subaccount into monitoring: creates (or reactivates)
+        // a MonitoringConfig and flips Subaccounts.isMonitored.
+        this.on('enableMonitoring', async (req) => {
+            const { subaccountId, spendingLimit, warningThresholdPct, alertThresholdPct } = req.data
+            info(`enableMonitoring called for ${subaccountId}`)
+
+            if (!subaccountId) {
+                return { status: 'error', configId: '', message: 'subaccountId is required' }
+            }
+
+            const db = cds.db || await cds.connect.to('db')
+
+            const sub = await db.run(
+                SELECT.one.from('aicorefin.Subaccounts').where({ subaccountId })
+            )
+            if (!sub) {
+                return { status: 'error', configId: '', message: `Subaccount ${subaccountId} not found in master. Run a CMS sync first or add it manually.` }
+            }
+
+            // Reactivate an existing config if present, else create one
+            const existing = await db.run(
+                SELECT.one.from('aicorefin.MonitoringConfigs').where({ subaccountId })
+            )
+
+            const values = {
+                subaccountName: sub.subaccountName,
+                spendingLimit: spendingLimit != null ? spendingLimit : 100,
+                warningThresholdPct: warningThresholdPct != null ? warningThresholdPct : 70,
+                alertThresholdPct: alertThresholdPct != null ? alertThresholdPct : 90,
+                isActive: true
+            }
+
+            let configId
+            if (existing) {
+                await db.run(UPDATE('aicorefin.MonitoringConfigs').set(values).where({ ID: existing.ID }))
+                configId = existing.ID
+            } else {
+                // Place new config at the end; generate UUID explicitly so we can return it
+                const countRow = await db.run(
+                    SELECT.one.from('aicorefin.MonitoringConfigs').columns('count(ID) as cnt')
+                )
+                const displayOrder = (countRow && countRow.cnt) || 0
+                configId = cds.utils.uuid()
+                await db.run(
+                    INSERT.into('aicorefin.MonitoringConfigs').entries({
+                        ID: configId,
+                        subaccountId,
+                        ...values,
+                        checkTimeUtc: '07:00',
+                        receiveDailyEmails: false,
+                        displayOrder,
+                        tags: ''
+                    })
+                )
+            }
+
+            await db.run(UPDATE('aicorefin.Subaccounts').set({ isMonitored: true }).where({ subaccountId }))
+
+            return { status: 'ok', configId: configId || '', message: `Monitoring enabled for ${sub.subaccountName || subaccountId}` }
+        })
+
+        // ── modelBreakdown function ───────────────────────────────────────────
+        // Per-model CU-by-type, tokens, cost, and cost-per-1K-tokens for a month.
+        this.on('modelBreakdown', async (req) => {
+            const db = cds.db || await cds.connect.to('db')
+            const { reportYearMonth, subaccountId } = req.data
+            if (!reportYearMonth) return []
+
+            // Latest consumption record for the month (per subaccount, or across all)
+            const recWhere = { reportYearMonth }
+            if (subaccountId) recWhere.subaccountId = subaccountId
+            const records = await db.run(
+                SELECT.from('aicorefin.ConsumptionRecords').where(recWhere).orderBy({ recordDate: 'desc' })
+            )
+            if (!records || records.length === 0) return []
+
+            // One latest record per subaccount, then its model usages
+            const latestBySub = {}
+            for (const r of records) {
+                if (!latestBySub[r.subaccountId]) latestBySub[r.subaccountId] = r
+            }
+            const recordIds = Object.values(latestBySub).map(r => r.ID)
+            const models = await db.run(
+                SELECT.from('aicorefin.ModelUsages').where({ consumptionRecord_ID: { in: recordIds } })
+            )
+
+            // Commercial cost for the month, by model/plan name
+            const costWhere = { reportYearMonth, serviceId: 'ai-core' }
+            if (subaccountId) costWhere.subaccountId = subaccountId
+            const commercial = await db.run(
+                SELECT.from('aicorefin.CommercialMeasures').where(costWhere)
+            )
+            const costByModel = {}
+            let currency = ''
+            for (const c of commercial) {
+                const key = c.planName || c.plan || c.metricName || ''
+                costByModel[key] = (costByModel[key] || 0) + Number(c.cost || 0)
+                if (c.currency) currency = c.currency
+            }
+
+            // Aggregate model usages across subaccounts by model name
+            const agg = {}
+            for (const m of models) {
+                const k = m.modelName
+                if (!agg[k]) {
+                    agg[k] = { modelName: k, capacityUnits: 0, inferenceCu: 0, groundingCu: 0, genaiTokenCu: 0, dataIndexedCu: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 }
+                }
+                agg[k].capacityUnits += Number(m.capacityUnits || 0)
+                agg[k].inferenceCu += Number(m.inferenceCu || 0)
+                agg[k].groundingCu += Number(m.groundingCu || 0)
+                agg[k].genaiTokenCu += Number(m.genaiTokenCu || 0)
+                agg[k].dataIndexedCu += Number(m.dataIndexedCu || 0)
+                agg[k].inputTokens += Number(m.inputTokens || 0)
+                agg[k].outputTokens += Number(m.outputTokens || 0)
+                agg[k].totalTokens += Number(m.totalTokens || 0)
+            }
+
+            const totalCu = Object.values(agg).reduce((s, m) => s + m.capacityUnits, 0)
+            return Object.values(agg)
+                .sort((a, b) => b.capacityUnits - a.capacityUnits)
+                .map(m => {
+                    const cost = costByModel[m.modelName] || 0
+                    const costPer1kTokens = m.totalTokens > 0 ? Number((cost / (m.totalTokens / 1000)).toFixed(6)) : 0
+                    return {
+                        ...m,
+                        sharePercentage: totalCu > 0 ? Number((m.capacityUnits / totalCu * 100).toFixed(2)) : 0,
+                        cost: Number(cost.toFixed(4)),
+                        currency,
+                        costPer1kTokens
+                    }
+                })
+        })
+
+        // ── topModelsByCost function ──────────────────────────────────────────
+        this.on('topModelsByCost', async (req) => {
+            const db = cds.db || await cds.connect.to('db')
+            const year = req.data.year || new Date().getFullYear()
+            const top = req.data.top || 10
+            const subaccountId = req.data.subaccountId
+            const yearPrefix = String(year)
+
+            // Cost per plan/model name from CommercialMeasures across the year
+            const costWhere = { reportYearMonth: { like: yearPrefix + '%' }, serviceId: 'ai-core' }
+            if (subaccountId) costWhere.subaccountId = subaccountId
+            const commercial = await db.run(
+                SELECT.from('aicorefin.CommercialMeasures').where(costWhere)
+            )
+
+            // CU + tokens per model from ConsumptionRecords/ModelUsages across the year
+            const recWhere = { reportYearMonth: { like: yearPrefix + '%' } }
+            if (subaccountId) recWhere.subaccountId = subaccountId
+            const records = await db.run(
+                SELECT.from('aicorefin.ConsumptionRecords').columns('ID').where(recWhere)
+            )
+            const recIds = records.map(r => r.ID)
+            const models = recIds.length > 0
+                ? await db.run(SELECT.from('aicorefin.ModelUsages').where({ consumptionRecord_ID: { in: recIds } }))
+                : []
+
+            const byModel = {}
+            let currency = ''
+            for (const c of commercial) {
+                const k = c.planName || c.plan || c.metricName || ''
+                if (!byModel[k]) byModel[k] = { modelName: k, totalCost: 0, totalCu: 0, totalTokens: 0 }
+                byModel[k].totalCost += Number(c.cost || 0)
+                if (c.currency) currency = c.currency
+            }
+            for (const m of models) {
+                const k = m.modelName
+                if (!byModel[k]) byModel[k] = { modelName: k, totalCost: 0, totalCu: 0, totalTokens: 0 }
+                byModel[k].totalCu += Number(m.capacityUnits || 0)
+                byModel[k].totalTokens += Number(m.totalTokens || 0)
+            }
+
+            return Object.values(byModel)
+                .sort((a, b) => b.totalCost - a.totalCost || b.totalCu - a.totalCu)
+                .slice(0, top)
+                .map(m => ({
+                    modelName: m.modelName,
+                    totalCost: Number(m.totalCost.toFixed(4)),
+                    totalCu: Number(m.totalCu.toFixed(6)),
+                    totalTokens: m.totalTokens,
+                    currency
+                }))
+        })
+
+        // ── cuTypeTrend function ──────────────────────────────────────────────
+        this.on('cuTypeTrend', async (req) => {
+            const db = cds.db || await cds.connect.to('db')
+            const year = req.data.year || new Date().getFullYear()
+            const subaccountId = req.data.subaccountId
+            const yearPrefix = String(year)
+
+            const recWhere = { reportYearMonth: { like: yearPrefix + '%' } }
+            if (subaccountId) recWhere.subaccountId = subaccountId
+            const records = await db.run(
+                SELECT.from('aicorefin.ConsumptionRecords').where(recWhere).orderBy({ recordDate: 'desc' })
+            )
+            if (!records || records.length === 0) return []
+
+            // Latest record per (subaccount, month)
+            const latest = {}
+            for (const r of records) {
+                const key = `${r.subaccountId}|${r.reportYearMonth}`
+                if (!latest[key]) latest[key] = r
+            }
+            const recIds = Object.values(latest).map(r => r.ID)
+            const models = recIds.length > 0
+                ? await db.run(SELECT.from('aicorefin.ModelUsages').where({ consumptionRecord_ID: { in: recIds } }))
+                : []
+            const recById = {}
+            for (const r of Object.values(latest)) recById[r.ID] = r
+
+            const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+            const byMonth = {}
+            for (const m of models) {
+                const rec = recById[m.consumptionRecord_ID]
+                if (!rec) continue
+                const ym = rec.reportYearMonth
+                if (!byMonth[ym]) byMonth[ym] = { inferenceCu: 0, groundingCu: 0, genaiTokenCu: 0, dataIndexedCu: 0 }
+                byMonth[ym].inferenceCu += Number(m.inferenceCu || 0)
+                byMonth[ym].groundingCu += Number(m.groundingCu || 0)
+                byMonth[ym].genaiTokenCu += Number(m.genaiTokenCu || 0)
+                byMonth[ym].dataIndexedCu += Number(m.dataIndexedCu || 0)
+            }
+
+            return Object.keys(byMonth).sort().map(ym => {
+                const b = byMonth[ym]
+                const monthIdx = parseInt(ym.slice(4, 6)) - 1
+                return {
+                    month: months[monthIdx] || ym,
+                    reportYearMonth: ym,
+                    inferenceCu: Number(b.inferenceCu.toFixed(6)),
+                    groundingCu: Number(b.groundingCu.toFixed(6)),
+                    genaiTokenCu: Number(b.genaiTokenCu.toFixed(6)),
+                    dataIndexedCu: Number(b.dataIndexedCu.toFixed(6)),
+                    totalCu: Number((b.inferenceCu + b.groundingCu + b.genaiTokenCu + b.dataIndexedCu).toFixed(6))
+                }
+            })
+        })
+
         return super.init()
     }
 }
