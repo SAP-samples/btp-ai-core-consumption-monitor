@@ -8,7 +8,6 @@ resources/
 db.sqlite
 default-env.json
 @cds-models/
-package-lock.json
 app/dashboard/node_modules/
 app/dashboard/dist/
 .DS_Store
