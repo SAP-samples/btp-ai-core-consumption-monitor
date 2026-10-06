@@ -6,14 +6,16 @@
 
 ## Description
 
-This application monitors and visualizes **SAP AI Core capacity unit (CU) consumption** across multiple BTP subaccounts. It fetches data from the SAP BTP Usage and Accounting Service (UAS) APIs and provides both a **Technical View** (CU per model, tokens) and a **Commercial View** (billing costs) of AI Core usage.
+This application monitors and visualizes **SAP AI Core capacity unit (CU) consumption** across multiple BTP subaccounts. It fetches data from the SAP BTP Usage and Accounting Service (UAS) APIs and provides a **Technical View** (CU per model, tokens), a **Commercial View** (billing costs), and an **AI Breakdown View** (cost per token, CU by type) of AI Core usage — across a full BTP account hierarchy when the optional Cloud Management Service integration is enabled.
 
 The application helps FinOps teams and platform administrators to:
-- Track AI Core spending against monthly budgets
-- Identify which models/applications consume the most capacity units
-- Get alerted when consumption approaches configured thresholds
-- View historical consumption trends month over month
-- Understand the cost breakdown (Inference CU, Grounding CU, GenAI Token CU, Data Indexed CU)
+
+- Discover BTP subaccounts automatically via the Cloud Management Service (CMS) hierarchy, or manage them manually
+- Track AI Core spending against monthly budgets with per-subaccount alerts
+- Identify which models consume the most capacity units and at what cost per token
+- Get notified when consumption approaches configured thresholds (SMTP email or SAP ANS)
+- View historical consumption trends month over month with Recharts visualizations
+- Navigate the account hierarchy — Business Unit → Application → Subaccount — from the header
 
 ![Dashboard Overview](ScreenShot/OverView.png)
 
@@ -30,7 +32,8 @@ The application helps FinOps teams and platform administrators to:
 | Frontend | React 18, Vite, Tailwind CSS, Recharts, Lucide Icons |
 | Authentication | SAP XSUAA |
 | Data Source | BTP Usage & Accounting Service (UAS) APIs |
-| Notifications | SMTP (Nodemailer), SAP Alert Notification Service |
+| Account Discovery | SAP Cloud Management Service (CMS) — optional |
+| Notifications | SMTP (Nodemailer), HTTP API endpoint, SAP Alert Notification Service |
 
 ## Requirements
 
@@ -45,6 +48,7 @@ The application helps FinOps teams and platform administrators to:
 | HTML5 Application Repository | app-host | ✅ Yes |
 | Job Scheduling Service | standard | ❌ Optional (Recommended) |
 | Alert Notification Service | standard | ❌ Optional |
+| Cloud Management Service (CIS) | central-viewer | ❌ Optional |
 
 ### Development Tools
 
@@ -93,13 +97,26 @@ npm run undeploy
 
 ## Configuration
 
-After deployment:
+### Without CMS (Manual Mode)
 
-1. Open the application via BTP Launchpad or directly via the HTML5 app URL
-2. Navigate to **Configuration** tab
-3. **Add a subaccount** — enter the Subaccount ID (UUID), display name, and monthly spending limit
+After deployment, subaccounts are managed manually:
+
+1. Open the application and navigate to **Configuration**
+2. Under **Subaccount Discovery**, click **Add Subaccount Manually**
+3. Enter the Subaccount ID (UUID), display name, and monthly spending limit
 4. Click **"Run Check"** on the Overview page to fetch current data
 5. Click **"Load Historical"** to backfill historical consumption data
+
+### With CMS (Auto-Discovery Mode)
+
+When the Cloud Management Service binding is present (see [CMS Account Discovery](#cms-account-hierarchy-discovery)), the app discovers your BTP account hierarchy automatically:
+
+1. On startup, the app syncs your Global Account hierarchy into the **Subaccounts** master list
+2. Navigate to **Configuration → Subaccount Discovery** to see all discovered subaccounts grouped by Business Unit and Application
+3. Click **Enable Monitoring** on a subaccount to opt it in and set a spending limit and alert thresholds
+4. Use the **Sync from CMS** button to refresh the hierarchy at any time
+
+A subaccount that has not been opted in is visible in the discovery list but will not appear in the monitoring overview or trigger alerts.
 
 ## Security – Roles & Authorization
 
@@ -110,39 +127,49 @@ The application defines two role templates in `xs-security.json`:
 | `AICore_FinOps_Admin` | Admin | Full access — manage configuration, trigger checks, view all data, manage notifications |
 | `AICore_FinOps_Viewer` | Viewer | Read-only — view dashboards, monthly data, and alert history |
 
-### Current State
+Role-based authorization is enforced via `@requires` annotations in `srv/service.cds`. Assign the role collections to users or user groups in the BTP Cockpit after deployment.
 
-Authentication via XSUAA is **enabled** in production (users must log in), but role-based authorization (`@requires` annotations) is **currently disabled** for ease of initial setup and testing. This means any authenticated user has full access to all features.
+> In local development (`cds watch`), a dummy auth provider is used — all users are treated as Admin. In production (`[production]` profile in `package.json`), XSUAA is enforced.
 
-### Enabling Role-Based Access
+## CMS Account Hierarchy Discovery
 
-To restrict access by role:
+The optional **Cloud Management Service** (service: `cis`, plan: `central-viewer`) integration lets the app discover your full BTP account hierarchy — Global Account → Business Units (L1 directories) → Applications (L2 directories) → Subaccounts — without any manual data entry.
 
-1. **`srv/service.cds`** — Uncomment the `@requires` annotations:
-   ```cds
-   @requires: ['Viewer', 'Admin', 'system-user']
-   service FinOpsService { ... }
-   
-   @requires: 'Admin'
-   entity MonitoringConfigs ...
+### Enabling CMS
+
+1. Ensure `cis central-viewer` is entitled in your subaccount (BTP Cockpit → Entitlements)
+
+1. Create the service instance:
+
+   ```bash
+   cf create-service cis central-viewer ai-core-finops-cms
    ```
 
-2. **BTP Cockpit** — Assign the role collections (`AICore_FinOps_Admin`, `AICore_FinOps_Viewer`) to users or user groups.
+1. In `mta.yaml`, uncomment the CMS resource and its binding:
 
-3. **`app/dashboard/src/App.jsx`** — Restore role-based UI gating:
-   ```javascript
-   const isAdmin = userInfo?.roles?.includes('Admin')
+   ```yaml
+   # modules > ai-core-finops-srv > requires:
+   - name: ai-core-finops-cms
+
+   # resources:
+   - name: ai-core-finops-cms
+     type: org.cloudfoundry.managed-service
+     parameters:
+       service: cis
+       service-plan: central-viewer
    ```
 
-> **Note:** The `package.json` already has `"auth": { "kind": "xsuaa" }` configured under `[production]`, so no change is needed there.
+1. Rebuild and redeploy.
+
+The app reads the CMS API endpoint and OAuth token URL directly from the service binding (`credentials.endpoints.accounts_service_url` and `credentials.uaa.url`) — no manual region configuration is needed.
+
+### Fallback Behavior
+
+If the CMS service is not bound, the app boots normally and operates in manual mode. The Subaccount Discovery UI will show the **Add Manually** form instead of the hierarchy browser.
 
 ## Job Scheduling (Optional but Recommended)
 
-The application can use the **SAP BTP Job Scheduling Service** for automated daily monitoring checks. While optional, it is **recommended** to enable the Job Scheduler to ensure consumption data is fetched automatically and alerts are triggered in a timely manner.
-
-### Without Job Scheduler (Default)
-
-Use the **"Run Check"** or **"Check All"** buttons in the UI to manually pull fresh data from the UAS API. This is the default deployment configuration.
+The application can use the **SAP BTP Job Scheduling Service** for automated daily monitoring checks. Without it, use the **"Run Check"** or **"Check All"** buttons in the UI to pull fresh data on demand.
 
 ### Enabling Job Scheduler
 
@@ -162,9 +189,10 @@ Use the **"Run Check"** or **"Check All"** buttons in the UI to manually pull fr
       enable-xsuaa-support: true
 ```
 
-2. Rebuild and redeploy.
+1. Rebuild and redeploy.
 
 The application will automatically register a daily cron job (07:00 UTC) that:
+
 - Fetches current month usage for all active subaccounts (technical + commercial)
 - Stores/updates consumption records in HANA
 - Sends notifications (email/ANS) if thresholds are breached
@@ -172,26 +200,22 @@ The application will automatically register a daily cron job (07:00 UTC) that:
 
 ## Notifications
 
-The application supports two notification channels:
+The application supports three notification channels, all configurable from the **Configuration → Notification Settings** section:
 
 | Channel | Description |
 |---------|-------------|
-| **SMTP Email** | Rich HTML emails with CU breakdown, progress bars, model details |
-| **SAP ANS** | Structured events posted to Alert Notification Service |
+| **SMTP Email** | Rich HTML emails with CU breakdown, progress bars, and model details. Supports TLS/STARTTLS. |
+| **API Endpoint** | Posts a JSON alert payload to any HTTP endpoint (e.g. a webhook, a custom notification bus). Supports Bearer token and custom header auth. |
+| **SAP ANS** | Structured events posted to the SAP Alert Notification Service. |
 
-Configure notifications in the **Configuration** → **Notification Settings** section. Both channels can be independently enabled/disabled.
-
-## Road Map
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| CMS Service Integration | Integration with Cloud Management Service (CMS) for fetching sub account information through API — enabling automatic discovery and onboarding of subaccounts | 🔜 Planned |
+All channels can be independently enabled/disabled. Use the **Send Test** buttons in the UI to verify connectivity before enabling live alerts.
 
 ## Known Issues
 
 - Token data (input/output) is only available for GenAI models (GPT, Claude, etc.) — vector_storage and retrieval_text show "—" for tokens
 - Commercial cost data from `monthlySubaccountsCost` may not be immediately available for the current month (SAP processes with a delay)
 - The "Projected" metric uses simple linear extrapolation and may not reflect actual month-end usage
+- CMS sync discovers only subaccounts that are children of L1 (Business Unit) and L2 (Application) directories; subaccounts placed directly under the Global Account are not picked up
 
 ## How to Obtain Support
 
