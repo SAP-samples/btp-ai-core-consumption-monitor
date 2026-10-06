@@ -2,14 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   fetchMonitoringConfigs, createMonitoringConfig, updateMonitoringConfig, deleteMonitoringConfig,
   fetchNotificationConfig, updateNotificationConfig, testNotification, sendTestEmail,
-  fetchSubaccountsMaster, fetchCmsBusinessUnits, fetchCmsApplications,
+  fetchSubaccountsMaster,
   refreshCMSDirectories, enableMonitoring, createSubaccountManual
 } from '../services/api'
 import {
   Save, Send, Plus, Trash2, Edit2, X, Building2, ToggleLeft, ToggleRight,
   Eye, EyeOff, RefreshCw, Globe, Mail, Zap, ChevronDown, ChevronRight, Check
 } from 'lucide-react'
-import { SearchableSelect } from '../components'
+
+
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
 
@@ -122,10 +123,7 @@ function MonitoringEditForm({ config, onSave, onCancel, saving }) {
 
 function SubaccountDiscovery({ onEnabled, monitoredIds }) {
   const [discovered, setDiscovered] = useState([])
-  const [businessUnits, setBusinessUnits] = useState([])
-  const [applications, setApplications] = useState([])
-  const [filterBu, setFilterBu] = useState('')
-  const [filterApp, setFilterApp] = useState('')
+  const [search, setSearch] = useState('')
   const [syncing, setSyncing] = useState(false)
   const [syncMsg, setSyncMsg] = useState('')
   const [enabling, setEnabling] = useState(null)
@@ -133,14 +131,8 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
   const [form, setForm] = useState({ spendingLimit: 100, warningThresholdPct: 70, alertThresholdPct: 90 })
 
   const load = useCallback(async () => {
-    const [subs, bus, apps] = await Promise.all([
-      fetchSubaccountsMaster().catch(() => []),
-      fetchCmsBusinessUnits().catch(() => []),
-      fetchCmsApplications().catch(() => [])
-    ])
+    const subs = await fetchSubaccountsMaster().catch(() => [])
     setDiscovered(subs)
-    setBusinessUnits(bus)
-    setApplications(apps)
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -166,24 +158,14 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
     finally { setEnabling(null) }
   }
 
-  // Filter by BU / App via businessUnitGuid / parentDirectoryGuid
-  const buGuids = filterApp
-    ? [applications.find(a => a.ID === filterApp)?.businessUnitId].filter(Boolean)
-    : filterBu ? [filterBu] : null
+  const hasCms = discovered.some(s => s.discoveredViaCms)
 
-  const appGuids = filterApp ? [filterApp] : null
-
-  // A subaccount matches if its businessUnitGuid is in buGuids (when BU filter set)
-  // and its parentDirectoryGuid is in appGuids (when App filter set)
-  const filtered = discovered.filter(sa => {
-    if (buGuids && !buGuids.includes(sa.businessUnitGuid)) return false
-    if (appGuids && !appGuids.includes(sa.parentDirectoryGuid)) return false
-    return true
-  })
+  const filtered = search
+    ? discovered.filter(sa => (sa.subaccountName || sa.subaccountId).toLowerCase().includes(search.toLowerCase()))
+    : discovered
 
   const unmonitored = filtered.filter(sa => !monitoredIds.includes(sa.subaccountId))
   const monitored = filtered.filter(sa => monitoredIds.includes(sa.subaccountId))
-  const hasCms = businessUnits.length > 0
 
   return (
     <div className="space-y-4">
@@ -200,30 +182,20 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
         {!hasCms && <span className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1 rounded">CMS not configured — showing manually-added subaccounts only</span>}
       </div>
 
-      {/* Hierarchy filters */}
-      {hasCms && (
-        <div className="flex gap-3 flex-wrap">
-          <SearchableSelect
-            options={businessUnits.map(bu => ({ value: bu.ID, label: bu.shortName }))}
-            value={filterBu}
-            onChange={val => { setFilterBu(val || ''); setFilterApp('') }}
-            placeholder="All Business Units"
-            allLabel="All Business Units"
-            icon={Building2}
-            className="flex-1 min-w-[200px]"
-          />
-          {filterBu && (
-            <SearchableSelect
-              options={applications.filter(a => a.businessUnitId === filterBu).map(a => ({ value: a.ID, label: a.shortName }))}
-              value={filterApp}
-              onChange={val => setFilterApp(val || '')}
-              placeholder="All Applications"
-              allLabel="All Applications"
-              className="flex-1 min-w-[200px]"
-            />
-          )}
-        </div>
-      )}
+      {/* Search */}
+      <div className="flex items-center border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus-within:ring-2 focus-within:ring-sap-blue px-2">
+        <Building2 size={14} className="text-gray-400 shrink-0" />
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search subaccounts…"
+          className="w-full text-sm px-2 py-1.5 bg-transparent dark:text-gray-100 placeholder:text-gray-400 focus:outline-none"
+        />
+        {search && (
+          <button onClick={() => setSearch('')} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">✕</button>
+        )}
+      </div>
 
       {/* ── Activated subaccounts ────────────────────────────────────────── */}
       {monitored.length > 0 && (
