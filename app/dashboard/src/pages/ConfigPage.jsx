@@ -9,6 +9,7 @@ import {
   Save, Send, Plus, Trash2, Edit2, X, Building2, ToggleLeft, ToggleRight,
   Eye, EyeOff, RefreshCw, Globe, Mail, Zap, ChevronDown, ChevronRight, Check
 } from 'lucide-react'
+import { SearchableSelect } from '../components'
 
 // ── Shared primitives ─────────────────────────────────────────────────────────
 
@@ -202,25 +203,24 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
       {/* Hierarchy filters */}
       {hasCms && (
         <div className="flex gap-3 flex-wrap">
-          <select
+          <SearchableSelect
+            options={businessUnits.map(bu => ({ value: bu.ID, label: bu.shortName }))}
             value={filterBu}
-            onChange={e => { setFilterBu(e.target.value); setFilterApp('') }}
-            className={IC + ' w-auto flex-1 min-w-[180px]'}
-          >
-            <option value="">All Business Units</option>
-            {businessUnits.map(bu => <option key={bu.ID} value={bu.ID}>{bu.shortName}</option>)}
-          </select>
+            onChange={val => { setFilterBu(val || ''); setFilterApp('') }}
+            placeholder="All Business Units"
+            allLabel="All Business Units"
+            icon={Building2}
+            className="flex-1 min-w-[200px]"
+          />
           {filterBu && (
-            <select
+            <SearchableSelect
+              options={applications.filter(a => a.businessUnitId === filterBu).map(a => ({ value: a.ID, label: a.shortName }))}
               value={filterApp}
-              onChange={e => setFilterApp(e.target.value)}
-              className={IC + ' w-auto flex-1 min-w-[180px]'}
-            >
-              <option value="">All Applications</option>
-              {applications.filter(a => a.businessUnitId === filterBu).map(a => (
-                <option key={a.ID} value={a.ID}>{a.shortName}</option>
-              ))}
-            </select>
+              onChange={val => setFilterApp(val || '')}
+              placeholder="All Applications"
+              allLabel="All Applications"
+              className="flex-1 min-w-[200px]"
+            />
           )}
         </div>
       )}

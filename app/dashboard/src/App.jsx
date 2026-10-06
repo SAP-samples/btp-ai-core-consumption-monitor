@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, createContext, useContext } from 'react'
+import { useState, useEffect, createContext, useContext } from 'react'
 import { HashRouter as Router, Routes, Route, NavLink } from 'react-router-dom'
 import { BarChart3, Settings, Bell, Activity, LayoutDashboard, Building2, Moon, Sun } from 'lucide-react'
 import { fetchUserInfo, fetchSubaccounts, fetchCmsBusinessUnits, fetchCmsApplications } from './services/api'
-import { ErrorBoundary } from './components'
+import { ErrorBoundary, SearchableSelect } from './components'
 import DashboardPage from './pages/DashboardPage'
 import SubaccountPage from './pages/SubaccountPage'
 import MonthlyPage from './pages/MonthlyPage'
@@ -42,90 +42,6 @@ function NavItem({ to, icon: Icon, label }) {
       <Icon size={18} />
       <span className="hidden md:inline">{label}</span>
     </NavLink>
-  )
-}
-
-// ── Searchable subaccount dropdown ───────────────────────────────────────────
-function SearchableSelect({ subaccounts, value, onChange }) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const ref = useRef(null)
-
-  useEffect(() => {
-    function onMouseDown(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onMouseDown)
-    return () => document.removeEventListener('mousedown', onMouseDown)
-  }, [])
-
-  const selected = subaccounts.find(s => s.subaccountId === value)
-  const filtered = query
-    ? subaccounts.filter(s => s.subaccountName?.toLowerCase().includes(query.toLowerCase()))
-    : subaccounts
-
-  function handleFocus() {
-    setQuery('')
-    setOpen(true)
-  }
-
-  function handleSelect(id) {
-    onChange(id || null)
-    setQuery('')
-    setOpen(false)
-  }
-
-  if (!subaccounts.length) return null
-
-  return (
-    <div ref={ref} className="relative w-52">
-      <div className="flex items-center border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 focus-within:ring-2 focus-within:ring-sap-blue">
-        <Building2 size={14} className="ml-2.5 text-gray-400 shrink-0" />
-        <input
-          type="text"
-          value={open ? query : (selected?.subaccountName || '')}
-          onFocus={handleFocus}
-          onChange={e => { setQuery(e.target.value); setOpen(true) }}
-          placeholder="All Subaccounts"
-          className="w-full text-sm px-2 py-1.5 bg-transparent dark:text-gray-100 placeholder:text-gray-400 focus:outline-none"
-        />
-        {value && !open && (
-          <button
-            onClick={() => handleSelect(null)}
-            className="mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
-            title="Clear"
-          >✕</button>
-        )}
-      </div>
-
-      {open && (
-        <div className="absolute top-full left-0 mt-1 w-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
-          <button
-            onMouseDown={() => handleSelect(null)}
-            className="w-full text-left px-3 py-2 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700 border-b dark:border-gray-700"
-          >
-            All Subaccounts
-          </button>
-          {filtered.length === 0 ? (
-            <div className="px-3 py-2 text-sm text-gray-400">No matches</div>
-          ) : (
-            filtered.map(sa => (
-              <button
-                key={sa.subaccountId}
-                onMouseDown={() => handleSelect(sa.subaccountId)}
-                className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                  sa.subaccountId === value
-                    ? 'bg-blue-50 dark:bg-blue-900/30 text-sap-blue font-medium'
-                    : 'text-gray-700 dark:text-gray-200'
-                }`}
-              >
-                {sa.subaccountName}
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -207,11 +123,17 @@ export default function App() {
               </div>
 
               <div className="flex items-center gap-3 flex-1 justify-end flex-wrap">
-                <SearchableSelect
-                  subaccounts={subaccounts}
-                  value={selectedSubaccount}
-                  onChange={setSelectedSubaccount}
-                />
+                {subaccounts.length > 0 && (
+                  <SearchableSelect
+                    options={subaccounts.map(s => ({ value: s.subaccountId, label: s.subaccountName }))}
+                    value={selectedSubaccount}
+                    onChange={setSelectedSubaccount}
+                    placeholder="All Subaccounts"
+                    allLabel="All Subaccounts"
+                    icon={Building2}
+                    className="w-52"
+                  />
+                )}
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setDarkMode(d => !d)}
