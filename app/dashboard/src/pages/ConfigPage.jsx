@@ -181,6 +181,7 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
   })
 
   const unmonitored = filtered.filter(sa => !monitoredIds.includes(sa.subaccountId))
+  const monitored = filtered.filter(sa => monitoredIds.includes(sa.subaccountId))
   const hasCms = businessUnits.length > 0
 
   return (
@@ -224,23 +225,18 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
         </div>
       )}
 
-      {/* Subaccount list */}
-      {unmonitored.length === 0 ? (
-        <div className="text-center py-8 text-gray-400">
-          {discovered.length === 0
-            ? 'No subaccounts discovered yet. Click "Sync from CMS" or add one manually below.'
-            : 'All discovered subaccounts are already being monitored.'}
-        </div>
-      ) : (
-        <div className="divide-y border rounded-lg overflow-hidden">
-          {unmonitored.map(sa => (
-            <div key={sa.subaccountId}>
-              <div
-                className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
-                onClick={() => setExpandId(expandId === sa.subaccountId ? null : sa.subaccountId)}
-              >
+      {/* ── Activated subaccounts ────────────────────────────────────────── */}
+      {monitored.length > 0 && (
+        <div>
+          <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+            Monitoring Active ({monitored.length})
+          </h4>
+          <div className="divide-y dark:divide-gray-700 border dark:border-gray-700 rounded-lg overflow-hidden">
+            {monitored.map(sa => (
+              <div key={sa.subaccountId} className="px-4 py-3 flex items-center justify-between bg-green-50/40 dark:bg-green-900/10">
                 <div className="flex items-center gap-3 min-w-0">
-                  {expandId === sa.subaccountId ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+                  <span className="w-2 h-2 rounded-full bg-green-500 shrink-0" />
                   <div className="min-w-0">
                     <div className="font-medium text-sm text-sap-dark dark:text-gray-100 truncate">{sa.subaccountName || sa.subaccountId}</div>
                     <div className="text-xs text-gray-400 truncate">{sa.subaccountId}{sa.region ? ` · ${sa.region}` : ''}</div>
@@ -248,35 +244,77 @@ function SubaccountDiscovery({ onEnabled, monitoredIds }) {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {sa.discoveredViaCms && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">CMS</span>}
-                  <span className="text-xs text-gray-400">Click to enable</span>
+                  <span className="text-xs font-medium text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-900/40 px-2 py-0.5 rounded-full">Activated</span>
                 </div>
               </div>
-              {expandId === sa.subaccountId && (
-                <div className="px-4 pb-4 pt-2 bg-blue-50/30 dark:bg-blue-900/10 border-t space-y-3">
-                  <p className="text-xs text-gray-500">Set the monitoring budget and thresholds before enabling:</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <FormField label="Monthly Entitlement (CU)">
-                      <input type="number" step="0.01" className={IC} value={form.spendingLimit} onChange={e => setForm({ ...form, spendingLimit: parseFloat(e.target.value) || 100 })} />
-                    </FormField>
-                    <FormField label="Warning (%)">
-                      <input type="number" step="1" min="0" max="100" className={IC} value={form.warningThresholdPct} onChange={e => setForm({ ...form, warningThresholdPct: parseFloat(e.target.value) || 70 })} />
-                    </FormField>
-                    <FormField label="Alert (%)">
-                      <input type="number" step="1" min="0" max="100" className={IC} value={form.alertThresholdPct} onChange={e => setForm({ ...form, alertThresholdPct: parseFloat(e.target.value) || 90 })} />
-                    </FormField>
-                  </div>
-                  <button
-                    onClick={() => handleEnable(sa.subaccountId)}
-                    disabled={enabling === sa.subaccountId}
-                    className="flex items-center gap-2 px-4 py-2 bg-sap-blue text-white rounded-lg text-sm disabled:opacity-50 hover:bg-blue-700"
-                  >
-                    {enabling === sa.subaccountId ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
-                    Enable Monitoring
-                  </button>
-                </div>
-              )}
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Available to enable ───────────────────────────────────────────── */}
+      {(unmonitored.length > 0 || monitored.length === 0) && (
+        <div>
+          {monitored.length > 0 && (
+            <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-gray-400 inline-block" />
+              Available to Enable ({unmonitored.length})
+            </h4>
+          )}
+          {unmonitored.length === 0 ? (
+            <div className="text-center py-8 text-gray-400">
+              {discovered.length === 0
+                ? 'No subaccounts discovered yet. Click "Sync from CMS" or add one manually below.'
+                : 'All discovered subaccounts are already being monitored.'}
             </div>
-          ))}
+          ) : (
+            <div className="divide-y dark:divide-gray-700 border dark:border-gray-700 rounded-lg overflow-hidden">
+              {unmonitored.map(sa => (
+                <div key={sa.subaccountId}>
+                  <div
+                    className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer"
+                    onClick={() => setExpandId(expandId === sa.subaccountId ? null : sa.subaccountId)}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      {expandId === sa.subaccountId ? <ChevronDown size={14} className="text-gray-400 shrink-0" /> : <ChevronRight size={14} className="text-gray-400 shrink-0" />}
+                      <div className="min-w-0">
+                        <div className="font-medium text-sm text-sap-dark dark:text-gray-100 truncate">{sa.subaccountName || sa.subaccountId}</div>
+                        <div className="text-xs text-gray-400 truncate">{sa.subaccountId}{sa.region ? ` · ${sa.region}` : ''}</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {sa.discoveredViaCms && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">CMS</span>}
+                      <span className="text-xs text-gray-400">Click to enable</span>
+                    </div>
+                  </div>
+                  {expandId === sa.subaccountId && (
+                    <div className="px-4 pb-4 pt-2 bg-blue-50/30 dark:bg-blue-900/10 border-t dark:border-gray-700 space-y-3">
+                      <p className="text-xs text-gray-500">Set the monitoring budget and thresholds before enabling:</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <FormField label="Monthly Entitlement (CU)">
+                          <input type="number" step="0.01" className={IC} value={form.spendingLimit} onChange={e => setForm({ ...form, spendingLimit: parseFloat(e.target.value) || 100 })} />
+                        </FormField>
+                        <FormField label="Warning (%)">
+                          <input type="number" step="1" min="0" max="100" className={IC} value={form.warningThresholdPct} onChange={e => setForm({ ...form, warningThresholdPct: parseFloat(e.target.value) || 70 })} />
+                        </FormField>
+                        <FormField label="Alert (%)">
+                          <input type="number" step="1" min="0" max="100" className={IC} value={form.alertThresholdPct} onChange={e => setForm({ ...form, alertThresholdPct: parseFloat(e.target.value) || 90 })} />
+                        </FormField>
+                      </div>
+                      <button
+                        onClick={() => handleEnable(sa.subaccountId)}
+                        disabled={enabling === sa.subaccountId}
+                        className="flex items-center gap-2 px-4 py-2 bg-sap-blue text-white rounded-lg text-sm disabled:opacity-50 hover:bg-blue-700"
+                      >
+                        {enabling === sa.subaccountId ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                        Enable Monitoring
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
