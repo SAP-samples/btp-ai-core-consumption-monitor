@@ -14,6 +14,47 @@ entity NotificationChannels : cuid {
     name        : String(20)  @title: 'Channel Name';  // SMTP, ANS, API
 }
 
+// ── CMS Hierarchy (synced from SAP Cloud Management Service) ──────────────────
+
+/**
+ * BTP directory structure synced from Cloud Management Service.
+ * Level 1 directories (direct children of the Global Account) → BusinessUnit
+ * Level 2 directories (children of Level 1)                    → Application
+ */
+entity CMSDirectories {
+    key guid        : String(100)   @title: 'Directory GUID';
+        displayName : String(200)   @title: 'Directory Name';
+        description : String(500)   @title: 'Directory Description';
+        parentGuid  : String(100)   @title: 'Parent GUID';
+        level       : String(20)    @title: 'Level';  // 'BusinessUnit' (L1) or 'Application' (L2)
+        lastSynced  : Date          @title: 'Last Synced';
+}
+
+/**
+ * Mapping of which subaccounts belong to which directory (including nested).
+ */
+entity CMSDirectorySubaccounts {
+    key directoryGuid   : String(100)   @title: 'Directory GUID';
+    key subaccountGuid  : String(100)   @title: 'Subaccount GUID';
+}
+
+// ── Subaccount Master ─────────────────────────────────────────────────────────
+
+/**
+ * Master list of subaccounts (the discovered universe).
+ * Populated from CMS (discoveredViaCms = true) or added manually.
+ * `isMonitored` reflects whether an active MonitoringConfig exists for it.
+ */
+entity Subaccounts : managed {
+    key subaccountId        : String(100)   @title: 'Subaccount ID';  // BTP subaccount GUID
+    subaccountName          : String(200)   @title: 'Subaccount Name';
+    region                  : String(20)    @title: 'Region';
+    parentDirectoryGuid     : String(100)   @title: 'Parent Directory GUID';
+    businessUnitGuid        : String(100)   @title: 'Business Unit GUID';
+    discoveredViaCms        : Boolean       @title: 'Discovered via CMS';
+    isMonitored             : Boolean       @title: 'Monitored';
+}
+
 // ── Configuration Entities ────────────────────────────────────────────────────
 
 /**
@@ -23,6 +64,7 @@ entity NotificationChannels : cuid {
 entity MonitoringConfigs : cuid, managed {
     subaccountId            : String(100)   @title: 'Subaccount ID';
     subaccountName          : String(200)   @title: 'Subaccount Name';
+    subaccount              : Association to Subaccounts on subaccount.subaccountId = subaccountId;
     spendingLimit           : Decimal(15,2) @title: 'Monthly Spending Limit (CU)';
     warningThresholdPct     : Decimal(5,2)  @title: 'Warning Threshold (%)';
     alertThresholdPct       : Decimal(5,2)  @title: 'Alert Threshold (%)';
@@ -74,6 +116,7 @@ entity ConsumptionRecords : cuid, managed {
     reportYearMonth         : String(6)     @title: 'Report Year-Month';  // e.g. "202601"
     subaccountId            : String(100)   @title: 'Subaccount ID';
     subaccountName          : String(200)   @title: 'Subaccount Name';
+    subaccount              : Association to Subaccounts on subaccount.subaccountId = subaccountId;
     totalCapacityUnits      : Decimal(20,6) @title: 'Total Capacity Units';
     spendingLimit           : Decimal(15,2) @title: 'Spending Limit at Time';
     percentageUsed          : Decimal(7,2)  @title: 'Percentage Used (%)';
@@ -84,7 +127,6 @@ entity ConsumptionRecords : cuid, managed {
     alertLevel              : Association to AlertLevels @title: 'Alert Level';
     notificationSent        : Boolean       @title: 'Notification Sent';
     modelUsages             : Composition of many ModelUsages on modelUsages.consumptionRecord = $self;
-    usageMetrics            : Composition of many UsageMetrics on usageMetrics.consumptionRecord = $self;
 }
 
 entity ModelUsages : cuid {
@@ -101,20 +143,6 @@ entity ModelUsages : cuid {
     sharePercentage         : Decimal(7,2)  @title: 'Share (%)';
 }
 
-/**
- * Generic usage metrics — stores ALL measures from UAS API per application.
- * This supports any current and future measure types without schema changes.
- */
-entity UsageMetrics : cuid {
-    consumptionRecord       : Association to ConsumptionRecords @title: 'Consumption Record';
-    application             : String(200)   @title: 'Application';        // e.g. "gpt-4o", "vector_storage"
-    instanceId              : String(200)   @title: 'Instance ID';        // e.g. "document-grounding"
-    measureId               : String(100)   @title: 'Measure ID';         // e.g. "capacity_units", "input_tokens"
-    metricName              : String(200)   @title: 'Metric Name';        // e.g. "Capacity Unit", "Input Tokens"
-    usage                   : Decimal(20,6) @title: 'Usage Value';
-    unit                    : String(50)    @title: 'Unit';               // e.g. "capacity units", "tokens"
-}
-
 // ── Commercial Data (from monthlySubaccountsCost API - monthly) ───────────────
 
 /**
@@ -125,6 +153,7 @@ entity CommercialMeasures : cuid, managed {
     reportYearMonth         : String(6)     @title: 'Report Year-Month';  // e.g. "202601"
     subaccountId            : String(100)   @title: 'Subaccount ID';
     subaccountName          : String(200)   @title: 'Subaccount Name';
+    subaccount              : Association to Subaccounts on subaccount.subaccountId = subaccountId;
     serviceId               : String(100)   @title: 'Service ID';         // "ai-core"
     serviceName             : String(200)   @title: 'Service Name';       // "AI Core"
     plan                    : String(100)   @title: 'Plan';               // "extended"
@@ -148,6 +177,7 @@ entity AlertLogs : cuid, managed {
     alertLevel              : Association to AlertLevels @title: 'Alert Level';
     subaccountId            : String(100)   @title: 'Subaccount ID';
     subaccountName          : String(200)   @title: 'Subaccount Name';
+    subaccount              : Association to Subaccounts on subaccount.subaccountId = subaccountId;
     totalCu                 : Decimal(20,6) @title: 'Total CU at Alert Time';
     percentageUsed          : Decimal(7,2)  @title: 'Percentage Used (%)';
     spendingLimit           : Decimal(15,2) @title: 'Spending Limit';

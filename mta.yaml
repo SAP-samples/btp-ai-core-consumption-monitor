@@ -37,6 +37,7 @@ modules:
       - name: ai-core-finops-uas
       # - name: ai-core-finops-scheduler  # OPTIONAL: Uncomment to enable automated daily checks
       # - name: ai-core-finops-ans  # OPTIONAL: Uncomment if using ANS
+      # - name: ai-core-finops-cms  # OPTIONAL: Uncomment to enable CMS account hierarchy discovery
 
   - name: ai-core-finops-db-deployer
     type: hdb
@@ -170,6 +171,18 @@ resources:
   #     service-plan: standard
   #     service-keys:
   #       - name: ai-core-finops-ans-key
+
+  # OPTIONAL: SAP Cloud Management Service — enables automatic BTP account hierarchy discovery.
+  # Without this, subaccounts are managed manually in the Configuration page.
+  # Prerequisites: cf create-service cis central-viewer ai-core-finops-cms
+  # The service must be entitled in this subaccount (Global Account > Entitlements > cis > central-viewer).
+  # - name: ai-core-finops-cms
+  #   type: org.cloudfoundry.managed-service
+  #   parameters:
+  #     service: cis
+  #     service-plan: central-viewer
+  #     service-keys:
+  #       - name: ai-core-finops-cms-key
 
   - name: ai-core-finops-auth
     type: org.cloudfoundry.managed-service
