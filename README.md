@@ -28,7 +28,7 @@ The application helps FinOps teams and platform administrators to:
 | Layer | Technology |
 |-------|-----------|
 | Backend | SAP Cloud Application Programming Model (CAP) — Node.js |
-| Database | SAP HANA Cloud (HDI Container) |
+| Database | SAP HANA Cloud (HDI Container) — or PostgreSQL (BTP hyperscaler option) |
 | Frontend | React 18, Vite, Tailwind CSS, Recharts, Lucide Icons |
 | Authentication | SAP XSUAA |
 | Data Source | BTP Usage & Accounting Service (UAS) APIs |
@@ -41,7 +41,8 @@ The application helps FinOps teams and platform administrators to:
 
 | Service | Plan | Required |
 |---------|------|----------|
-| SAP HANA Cloud | hdi-shared | ✅ Yes |
+| SAP HANA Cloud | hdi-shared | ✅ Yes (default) |
+| PostgreSQL on SAP BTP, hyperscaler option | e.g. development / standard | ⬦ Alternative to HANA |
 | XSUAA | application | ✅ Yes |
 | UAS (Usage & Accounting) | reporting-ga-admin | ✅ Yes |
 | Destination Service | lite | ✅ Yes |
@@ -49,6 +50,10 @@ The application helps FinOps teams and platform administrators to:
 | Job Scheduling Service | standard | ❌ Optional (Recommended) |
 | Alert Notification Service | standard | ❌ Optional |
 | Cloud Management Service (CIS) | central-viewer | ❌ Optional |
+
+> **Database choice:** SAP HANA Cloud is the default. The app can alternatively run on
+> **PostgreSQL on SAP BTP (hyperscaler option)** — see [Database Options](#database-options)
+> below. Exactly one database is used per deployment; the two are not deployed together.
 
 ### Development Tools
 
@@ -80,9 +85,12 @@ The project uses scripts defined in `package.json`. Execute them with `npm run <
 
 | Script | Command | Description |
 |--------|---------|-------------|
-| `build` | `npm run build` | Build the MTA archive (`ai-core-finops.mtar`) |
-| `deploy` | `npm run deploy` | Deploy the MTA archive to Cloud Foundry |
+| `build` | `npm run build` | Build the MTA archive (`ai-core-finops.mtar`) — SAP HANA Cloud |
+| `deploy` | `npm run deploy` | Deploy the HANA MTA archive to Cloud Foundry |
 | `undeploy` | `npm run undeploy` | Remove all deployed apps and services |
+| `build:pg` | `npm run build:pg` | Build the PostgreSQL MTA archive (`ai-core-finops-pg.mtar`) from `mta-pg.yaml` |
+| `deploy:pg` | `npm run deploy:pg` | Deploy the PostgreSQL MTA archive to Cloud Foundry |
+| `undeploy:pg` | `npm run undeploy:pg` | Remove all deployed apps and services |
 
 ```bash
 # Build MTA archive
@@ -94,6 +102,39 @@ npm run deploy
 # Undeploy (removes all services)
 npm run undeploy
 ```
+
+## Database Options
+
+The app runs on **SAP HANA Cloud** (default) or **PostgreSQL on SAP BTP (hyperscaler
+option)**. One database is used per deployment — pick the matching MTA descriptor.
+Local development always uses SQLite (`cds watch`) regardless of the production target.
+
+| | SAP HANA Cloud (default) | PostgreSQL |
+|---|---|---|
+| MTA descriptor | `mta.yaml` | `mta-pg.yaml` |
+| DB service / plan | `hana` / `hdi-shared` | `postgresql-db` / `development` (adjust to entitlement) |
+| Schema deployer | `hdb` deployer module | `ai-core-finops-pg-deployer` (Node.js one-off task running `cds-deploy`) |
+| CDS profile | `production` → `db.kind: hana-cloud` | `production,pg` → `db.kind: postgres` |
+| Build / deploy | `npm run build` / `npm run deploy` | `npm run build:pg` / `npm run deploy:pg` |
+
+The application code is identical for both — all persistence goes through CAP's
+database-agnostic query API (CQN), so no source changes are needed to switch backends.
+
+### Deploying on PostgreSQL
+
+1. Entitle **PostgreSQL, hyperscaler option** (`postgresql-db`) in your subaccount and
+   adjust `service-plan` in `mta-pg.yaml` to match (e.g. `development`, `standard`).
+2. Build and deploy:
+
+   ```bash
+   npm run build:pg
+   npm run deploy:pg
+   ```
+
+The PostgreSQL profile (`[pg]` in `package.json`) sets `db.kind: postgres`. The running
+service module selects it at runtime via `CDS_ENV=production,pg`. The
+`ai-core-finops-pg-deployer` module runs once on deploy to create the schema and load the
+initial CSV data, and supports schema evolution on subsequent deploys.
 
 ## Configuration
 

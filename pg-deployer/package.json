@@ -1,0 +1,20 @@
+{
+	"name": "ai-core-finops-pg-deployer",
+	"version": "1.0.0",
+	"description": "PostgreSQL schema + initial-data deployer for the BTP AI Core FinOps app",
+	"private": true,
+	"dependencies": {
+		"@cap-js/postgres": "^3",
+		"@sap/cds": "^10"
+	},
+	"scripts": {
+		"start": "cds-deploy"
+	},
+	"cds": {
+		"requires": {
+			"db": {
+				"kind": "postgres"
+			}
+		}
+	}
+}

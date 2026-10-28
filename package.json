@@ -5,6 +5,7 @@
 	"private": true,
 	"dependencies": {
 		"@cap-js/hana": "^3",
+		"@cap-js/postgres": "^3",
 		"@sap/cds": "^10",
 		"@sap/hana-client": "^2.28.21",
 		"@sap/xsenv": "^6",
@@ -28,7 +29,10 @@
 		"build": "mbt build --mtar ai-core-finops.mtar",
 		"build:cf": "npx cds build --production",
 		"deploy": "cf deploy mta_archives/ai-core-finops.mtar --retries 1 --delete-services",
-		"undeploy": "cf undeploy btp-ai-core-finops --delete-services --delete-service-keys --delete-service-brokers"
+		"undeploy": "cf undeploy btp-ai-core-finops --delete-services --delete-service-keys --delete-service-brokers",
+		"build:pg": "mbt build -e mta-pg.yaml --mtar ai-core-finops-pg.mtar",
+		"deploy:pg": "cf deploy mta_archives/ai-core-finops-pg.mtar --retries 1 --delete-services",
+		"undeploy:pg": "cf undeploy btp-ai-core-finops --delete-services --delete-service-keys --delete-service-brokers"
 	},
 	"cds": {
 		"requires": {
@@ -45,8 +49,17 @@
 				"auth": {
 					"kind": "xsuaa"
 				}
+			},
+			"[pg]": {
+				"db": {
+					"kind": "postgres"
+				},
+				"auth": {
+					"kind": "xsuaa"
+				}
 			}
 		},
-		"_comment_roles": "Auth is xsuaa (login required) but no @requires annotations = any authenticated user has full access. To add roles later, uncomment @requires in srv/service.cds"
+		"_comment_roles": "Auth is xsuaa (login required) but no @requires annotations = any authenticated user has full access. To add roles later, uncomment @requires in srv/service.cds",
+		"_comment_db": "Default production DB is SAP HANA Cloud. To deploy on PostgreSQL (BTP hyperscaler option) instead, build/deploy with the 'pg' profile via mta-pg.yaml (npm run build:pg && npm run deploy:pg). Local dev always uses SQLite."
 	}
 }
